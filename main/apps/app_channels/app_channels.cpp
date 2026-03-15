@@ -713,6 +713,7 @@ void AppChannels::_enter_channel_edit(uint8_t channel_index, bool is_new)
     if (is_new)
     {
         _data.edit_channel = meshtastic_Channel_init_default;
+        _data.edit_channel.settings.channel_num = 1; // Default notification sound on creation
         _data.edit_channel.index = channel_index;
         _data.edit_channel.has_settings = true;
         _data.edit_channel.role = meshtastic_Channel_Role_SECONDARY;
