@@ -451,11 +451,8 @@ void AppStats::_render_gps_info()
         _draw_row(y, "Longitude", buf, TFT_CYAN);
         y += ROW_HEIGHT;
 
-        snprintf(buf, sizeof(buf), "%d m", (int)data.altitude_msl);
-        _draw_row(y, "Altitude MSL", buf, TFT_CYAN);
-        y += ROW_HEIGHT;
-        snprintf(buf, sizeof(buf), "%d m", (int)data.altitude_hae);
-        _draw_row(y, "Altitude HAE", buf, TFT_CYAN);
+        snprintf(buf, sizeof(buf), "%d / %d m", (int)data.altitude_msl, (int)data.altitude_hae);
+        _draw_row(y, "Altitude (MSL / HAE)", buf, TFT_CYAN);
         y += ROW_HEIGHT;
 
         snprintf(buf, sizeof(buf), "%.1f", data.hdop / 100.0f);
