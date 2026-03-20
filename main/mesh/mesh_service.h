@@ -350,7 +350,7 @@ namespace Mesh
          * @param channel    Channel index to use
          * @param want_response Request the recipient to send their NodeInfo back
          */
-        void sendNodeInfo(uint32_t dest, uint8_t channel, bool want_response = false, uint32_t not_before_ms = 0);
+        void sendNodeInfo(uint32_t dest, uint8_t channel, bool want_response = false);
 
         /**
          * @brief Send our position to a specific destination node.
@@ -358,7 +358,7 @@ namespace Mesh
          * @param channel Channel index to use
          * @return true if position was available and packet was enqueued
          */
-        bool sendPosition(uint32_t dest, uint8_t channel, bool want_response = false, uint32_t not_before_ms = 0);
+        bool sendPosition(uint32_t dest, uint8_t channel, bool want_response = false);
 
         /**
          * @brief Send a traceroute request to a node
@@ -412,9 +412,8 @@ namespace Mesh
                          uint32_t packet_id,
                          uint8_t channel,
                          uint8_t hop_limit,
-                         meshtastic_Routing_Error error_code = meshtastic_Routing_Error_NONE,
-                         uint32_t not_before_ms = 0);
-        bool sendAck(uint32_t to, uint32_t packet_id, uint8_t channel, uint8_t hop_limit, uint32_t not_before_ms = 0);
+                         meshtastic_Routing_Error error_code = meshtastic_Routing_Error_NONE);
+        bool sendAck(uint32_t to, uint32_t packet_id, uint8_t channel, uint8_t hop_limit);
         uint8_t getHopLimitForResponse(uint8_t hop_start, uint8_t hop_limit) const;
 
         // Configuration helpers
@@ -520,13 +519,14 @@ namespace Mesh
         static constexpr uint32_t ACK_TIMEOUT_MS = 30000; // 30 seconds
         static constexpr size_t MAX_PENDING_ACKS = 16;
 
-        // Meshtastic-compatible CSMA/CA reply delay (slot time × random CW backoff)
+        // Meshtastic-compatible CSMA/CA TX delay (set after each RF event)
         static constexpr uint8_t CW_MIN = 3;
         static constexpr uint8_t CW_MAX = 8;
         uint32_t _slot_time_ms;
+        uint32_t _tx_not_before_ms;
         uint32_t computeSlotTimeMsec() const;
         uint32_t getTxDelayMsec() const;
-        uint32_t getReplyNotBefore() const;
+        void setTxDelay();
 
         // Singleton instance for static callbacks
         static MeshService* _instance;

@@ -61,7 +61,6 @@ namespace Mesh
     {
         meshtastic_MeshPacket packet;
         uint32_t tx_time_ms;
-        uint32_t not_before_ms; // earliest TX time (0 = immediate)
         uint8_t retries_left;
         PacketPriority priority;
         uint8_t raw_data[MAX_LORA_PAYLOAD];
@@ -113,10 +112,8 @@ namespace Mesh
         bool enqueueTxRaw(const uint8_t* data,
                           uint8_t len,
                           PacketPriority priority = PacketPriority::DEFAULT,
-                          uint8_t port_hint = 0,
-                          uint32_t not_before_ms = 0);
+                          uint8_t port_hint = 0);
 
-        bool peekTx(QueuedPacket& packet) const;
         bool dequeueTx(QueuedPacket& packet);
         bool hasTxPackets() const;
         size_t getTxQueueSize() const;
