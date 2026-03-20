@@ -632,7 +632,7 @@ bool AppMonitor::_render_packet_detail()
         if (relay_id && _data.hal->mesh() && _data.hal->mesh()->getNode(relay_id, ni) && ni.info.user.short_name[0])
             snprintf(buf,
                      sizeof(buf),
-                     "%02x \u2192 %s (!%08lx)",
+                     "#%02x \u2192 %s (!%08lx)",
                      pkt.relay_node,
                      ni.info.user.short_name,
                      (unsigned long)relay_id);
