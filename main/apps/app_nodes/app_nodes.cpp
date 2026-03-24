@@ -53,6 +53,7 @@ using UTILS::TEXT::utf8_char_count;
 using UTILS::TEXT::utf8_char_len;
 using UTILS::TEXT::utf8_truncate_len;
 using UTILS::TEXT::wrap_text;
+using UTILS::TEXT::count_wrapped_lines;
 
 // UI Constants - compact layout matching flood app
 #define SCROLL_BAR_WIDTH 4
@@ -433,42 +434,6 @@ void AppNodes::_refresh_messages()
     store.markMessagesRead(_data.selected_node_id, false);
     _refresh_dm_line_counts();
     _data.update_list = true;
-}
-
-// Count wrapped lines for a text without allocating wrapped strings vector
-static uint16_t count_wrapped_lines(const std::string& text, int chars_per_line)
-{
-    if (text.empty())
-        return 1;
-
-    uint16_t lines = 0;
-    size_t pos = 0;
-    while (pos < text.length())
-    {
-        // Check for explicit newline
-        size_t nl = text.find('\n', pos);
-        if (nl != std::string::npos && nl - pos <= (size_t)chars_per_line)
-        {
-            lines++;
-            pos = nl + 1;
-            continue;
-        }
-
-        size_t line_len = std::min((size_t)chars_per_line, text.length() - pos);
-
-        if (pos + line_len < text.length() && text[pos + line_len] != '\n')
-        {
-            size_t last_space = text.rfind(' ', pos + line_len);
-            if (last_space != std::string::npos && last_space > pos)
-            {
-                line_len = last_space - pos + 1;
-            }
-        }
-
-        lines++;
-        pos += line_len;
-    }
-    return lines > 0 ? lines : 1;
 }
 
 void AppNodes::_refresh_dm_line_counts()
@@ -2160,8 +2125,7 @@ void AppNodes::_handle_node_detail_input()
             // Auto-scroll to bottom (newest messages visible)
             {
                 auto* canvas = _data.hal->canvas();
-                int area_bottom = canvas->height() - DM_HEADER_HEIGHT - 1;
-                int max_visible = (area_bottom - DM_HEADER_HEIGHT) / DM_ITEM_HEIGHT;
+                int max_visible = (canvas->height() - DM_HEADER_HEIGHT - DM_FOOTER_HEIGHT) / (DM_ITEM_HEIGHT + 1);
                 _data.dm_cur_line = _data.dm_total_lines > max_visible ? _data.dm_total_lines - max_visible : 0;
             }
             _data.view_state = ViewState::DIRECT_MESSAGE;
@@ -2325,8 +2289,7 @@ void AppNodes::_handle_dm_input()
         }
         else if (_data.hal->keyboard()->isKeyPressing(KEY_NUM_DOWN))
         {
-            int area_bottom = _data.hal->canvas()->height() - DM_HEADER_HEIGHT - 1;
-            int max_visible = (area_bottom - DM_HEADER_HEIGHT) / DM_ITEM_HEIGHT;
+            int max_visible = (_data.hal->canvas()->height() - DM_HEADER_HEIGHT - DM_FOOTER_HEIGHT) / (DM_ITEM_HEIGHT + 1);
             if (key_repeat_check(is_repeat, next_fire_ts, now))
             {
                 if (_data.dm_cur_line < _data.dm_total_lines - max_visible)
@@ -2342,8 +2305,7 @@ void AppNodes::_handle_dm_input()
             // page up
             if (key_repeat_check(is_repeat, next_fire_ts, now))
             {
-                int area_bottom = _data.hal->canvas()->height() - DM_HEADER_HEIGHT - 1;
-                int page_size = (area_bottom - DM_HEADER_HEIGHT) / DM_ITEM_HEIGHT;
+                int page_size = (_data.hal->canvas()->height() - DM_HEADER_HEIGHT - DM_FOOTER_HEIGHT) / (DM_ITEM_HEIGHT + 1);
                 if (_data.dm_cur_line > 0)
                 {
                     _data.hal->playNextSound();
@@ -2355,8 +2317,7 @@ void AppNodes::_handle_dm_input()
         else if (_data.hal->keyboard()->isKeyPressing(KEY_NUM_RIGHT))
         {
             // page down
-            int area_bottom = _data.hal->canvas()->height() - DM_HEADER_HEIGHT - 1;
-            int page_size = (area_bottom - DM_HEADER_HEIGHT) / DM_ITEM_HEIGHT;
+            int page_size = (_data.hal->canvas()->height() - DM_HEADER_HEIGHT - DM_FOOTER_HEIGHT) / (DM_ITEM_HEIGHT + 1);
             int max_scroll = _data.dm_total_lines - page_size;
             if (key_repeat_check(is_repeat, next_fire_ts, now) && max_scroll > 0)
             {
@@ -3796,8 +3757,7 @@ void AppNodes::_send_message(const std::string& text)
 
         // Auto-scroll to bottom after sending
         {
-            int area_bottom = _data.hal->canvas()->height() - DM_HEADER_HEIGHT - 1;
-            int max_visible = (area_bottom - DM_HEADER_HEIGHT) / DM_ITEM_HEIGHT;
+            int max_visible = (_data.hal->canvas()->height() - DM_HEADER_HEIGHT - DM_FOOTER_HEIGHT) / (DM_ITEM_HEIGHT + 1);
             _data.dm_cur_line = _data.dm_total_lines > max_visible ? _data.dm_total_lines - max_visible : 0;
         }
 
