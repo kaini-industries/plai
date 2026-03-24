@@ -352,6 +352,14 @@ namespace Mesh
         bool sendPosition(uint32_t dest, uint8_t channel, bool want_response = false);
 
         /**
+         * @brief Send our neighbor info (direct neighbors) to a node.
+         * @param dest       Destination node ID
+         * @param channel    Channel index to use
+         * @param want_response Request the recipient to send their NeighborInfo back
+         */
+        void sendNeighborInfo(uint32_t dest, uint8_t channel, bool want_response = false);
+
+        /**
          * @brief Send a traceroute request to a node
          * @param dest Destination node ID
          * @param channel Channel index

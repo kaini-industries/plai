@@ -2027,7 +2027,7 @@ void AppNodes::_handle_node_list_input()
                                                                 "Send",
                                                                 "Cancel"))
                         {
-                            // _data.hal->mesh()->sendNodeInfo(node.info.num, node.info.channel, true);
+                            _data.hal->mesh()->sendNeighborInfo(node.info.num, node.info.channel, true);
                         }
                         _data.update_list = true;
                     }

@@ -2781,6 +2781,12 @@ namespace Mesh
         neighbors_save(source, entries);
         if (_nodedb)
             _nodedb->markDirty();
+
+        if (packet.decoded.want_response && packet.to == _config.node_id)
+        {
+            ESP_LOGI(TAG, "Responding to NeighborInfo request from 0x%08lX", (unsigned long)packet.from);
+            sendNeighborInfo(packet.from, packet.channel, false);
+        }
     }
 
     void MeshService::handleTraceRoutePacket(const meshtastic_MeshPacket& packet, float snr)
@@ -3648,6 +3654,148 @@ namespace Mesh
         else
         {
             ESP_LOGW(TAG, "Failed to enqueue node info");
+        }
+    }
+
+    void MeshService::sendNeighborInfo(uint32_t dest, uint8_t channel, bool want_response)
+    {
+        if (!_nodedb)
+            return;
+
+        meshtastic_NeighborInfo ni = meshtastic_NeighborInfo_init_zero;
+        ni.node_id = _config.node_id;
+
+        size_t count = _nodedb->getNodeCount();
+        for (size_t i = 0; i < count && ni.neighbors_count < 10; i++)
+        {
+            NodeInfo node;
+            if (!_nodedb->getNodeByIndex(i, node))
+                continue;
+            if (node.info.num == _config.node_id)
+                continue;
+            if (!node.info.has_user)
+                continue;
+            if (!node.info.has_hops_away || node.info.hops_away != 0)
+                continue;
+
+            auto& nb = ni.neighbors[ni.neighbors_count];
+            nb.node_id = node.info.num;
+            nb.snr = node.info.snr;
+            nb.last_rx_time = node.info.last_heard;
+            ni.neighbors_count++;
+        }
+
+        ESP_LOGI(TAG, "Sending NeighborInfo to 0x%08lX (%u neighbors)", (unsigned long)dest, (unsigned)ni.neighbors_count);
+
+        uint8_t ni_buf[meshtastic_NeighborInfo_size + 16];
+        pb_ostream_t ni_stream = pb_ostream_from_buffer(ni_buf, sizeof(ni_buf));
+        if (!pb_encode(&ni_stream, meshtastic_NeighborInfo_fields, &ni))
+        {
+            ESP_LOGE(TAG, "Failed to encode NeighborInfo: %s", PB_GET_ERROR(&ni_stream));
+            return;
+        }
+
+        meshtastic_Data data = meshtastic_Data_init_default;
+        data.portnum = meshtastic_PortNum_NEIGHBORINFO_APP;
+        data.payload.size = ni_stream.bytes_written;
+        memcpy(data.payload.bytes, ni_buf, data.payload.size);
+        data.want_response = want_response;
+
+        uint8_t data_buf[MAX_LORA_PAYLOAD] = {};
+        pb_ostream_t data_stream = pb_ostream_from_buffer(data_buf, sizeof(data_buf));
+        if (!pb_encode(&data_stream, meshtastic_Data_fields, &data))
+        {
+            ESP_LOGE(TAG, "Failed to encode NeighborInfo data payload: %s", PB_GET_ERROR(&data_stream));
+            return;
+        }
+
+        meshtastic_MeshPacket packet = meshtastic_MeshPacket_init_default;
+        packet.from = _config.node_id;
+        packet.to = dest;
+        packet.id = _router.generatePacketId();
+        packet.channel = channel;
+        packet.want_ack = false;
+        packet.hop_limit = _config.lora_config.hop_limit;
+        packet.hop_start = packet.hop_limit;
+
+        uint8_t key[32] = {};
+        size_t key_len = 0;
+        bool no_crypto = false;
+        if (!expandChannelPsk(_config.primary_channel.settings, key, key_len, no_crypto))
+        {
+            ESP_LOGE(TAG, "Failed to expand channel PSK for NeighborInfo");
+            return;
+        }
+        memcpy(packet.public_key.bytes, key, 32);
+
+        uint8_t channel_hash = 0;
+        computeChannelHash(_config, key, key_len, channel_hash);
+
+        uint8_t payload[MAX_LORA_PAYLOAD] = {};
+        size_t payload_len = data_stream.bytes_written;
+        if (payload_len > (MAX_LORA_PAYLOAD - MESHTASTIC_HEADER_LENGTH))
+        {
+            ESP_LOGE(TAG, "NeighborInfo payload too large");
+            return;
+        }
+
+        if (no_crypto)
+        {
+            memcpy(payload, data_buf, payload_len);
+        }
+        else
+        {
+#if MESH_HAS_MBEDTLS
+            mbedtls_aes_context ctx;
+            mbedtls_aes_init(&ctx);
+            if (mbedtls_aes_setkey_enc(&ctx, key, (int)(key_len * 8)) != 0)
+            {
+                mbedtls_aes_free(&ctx);
+                ESP_LOGE(TAG, "Failed to set AES key for NeighborInfo");
+                return;
+            }
+
+            uint8_t nonce[16] = {};
+            writeU64Le(nonce, (uint64_t)packet.id);
+            writeU32Le(nonce + 8, packet.from);
+
+            size_t nc_off = 0;
+            uint8_t stream_block[16] = {};
+            if (mbedtls_aes_crypt_ctr(&ctx, payload_len, &nc_off, nonce, stream_block, data_buf, payload) != 0)
+            {
+                mbedtls_aes_free(&ctx);
+                ESP_LOGE(TAG, "AES-CTR encrypt failed for NeighborInfo");
+                return;
+            }
+            mbedtls_aes_free(&ctx);
+#else
+            ESP_LOGE(TAG, "AES support not available for NeighborInfo");
+            return;
+#endif
+        }
+
+        PacketHeader header = {};
+        header.to = packet.to;
+        header.from = packet.from;
+        header.id = packet.id;
+        header.channel = channel_hash;
+        header.next_hop = 0;
+        header.relay_node = (uint8_t)(packet.from & 0xFFu);
+        header.flags = (packet.hop_limit & PACKET_FLAGS_HOP_LIMIT_MASK) |
+                       ((packet.hop_start << PACKET_FLAGS_HOP_START_SHIFT) & PACKET_FLAGS_HOP_START_MASK);
+
+        uint8_t radio_buf[MAX_LORA_PAYLOAD] = {};
+        memcpy(radio_buf, &header, sizeof(header));
+        memcpy(radio_buf + sizeof(header), payload, payload_len);
+        const size_t radio_len = sizeof(header) + payload_len;
+
+        if (_router.enqueueTxRaw(radio_buf, (uint8_t)radio_len, PacketPriority::DEFAULT, meshtastic_PortNum_NEIGHBORINFO_APP))
+        {
+            ESP_LOGI(TAG, "NeighborInfo sent to 0x%08lX", (unsigned long)dest);
+        }
+        else
+        {
+            ESP_LOGW(TAG, "Failed to enqueue NeighborInfo");
         }
     }
 
