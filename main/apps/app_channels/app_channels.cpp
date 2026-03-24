@@ -138,7 +138,7 @@ static void _draw_channel_header(LGFX_Sprite* canvas,
         canvas->drawRightString(right_text, canvas->width() - 2 - 12, y);
     }
 
-    canvas->drawFastHLine(0, CHAT_HEADER_HEIGHT, canvas->width() - 1, THEME_COLOR_BG_SELECTED);
+    canvas->drawFastHLine(0, CHAT_HEADER_HEIGHT, canvas->width() - 1, THEME_COLOR_HEADER_LINE);
 }
 
 static bool is_repeat = false;

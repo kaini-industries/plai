@@ -203,7 +203,7 @@ void AppStats::_render_tab_header(const char* title)
             canvas->drawCircle(cx, cy, dot_r, TFT_DARKGREY);
     }
 
-    canvas->drawFastHLine(0, BODY_START_Y - 2, canvas->width(), TFT_DARKGREY);
+    canvas->drawFastHLine(0, BODY_START_Y - 2, canvas->width(), THEME_COLOR_HEADER_LINE);
 }
 
 void AppStats::_draw_row(int y, const char* label, const char* value, int value_color)

@@ -529,7 +529,7 @@ bool AppMonitor::_render_packet_detail()
     canvas->setTextColor(_direction_color(pkt), THEME_COLOR_BG);
     canvas->drawRightString(_direction_str(pkt), canvas->width() - 2, 0);
 
-    canvas->drawFastHLine(0, 14, canvas->width(), THEME_COLOR_BG_SELECTED);
+    canvas->drawFastHLine(0, 14, canvas->width(), THEME_COLOR_HEADER_LINE);
 
     // Build detail rows
     struct DetailRow
@@ -730,7 +730,7 @@ bool AppMonitor::_render_packet_detail()
 
         if (row.is_header)
         {
-            canvas->drawFastHLine(0, y + row_height / 2, canvas->width(), THEME_COLOR_BG_SELECTED);
+            canvas->drawFastHLine(0, y + row_height / 2, canvas->width(), THEME_COLOR_HEADER_LINE);
             canvas->setTextColor(TFT_ORANGE, THEME_COLOR_BG);
             canvas->drawString(row.label, 4, y + 1);
         }
