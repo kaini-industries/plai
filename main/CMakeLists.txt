@@ -27,7 +27,7 @@ idf_component_register(SRCS "main.cpp" ${APPS_SRCS} ${HAL_SRCS} ${SETTINGS_SRCS}
                     INCLUDE_DIRS "." "hal"
                     REQUIRES LovyanGFX mooncake Nanopb fatfs esp_adc driver mbedtls
                     WHOLE_ARCHIVE
-                    EMBED_FILES sound/error.wav sound/boot_sound.wav image/boot_logo.png sound/knock.wav sound/morse.wav sound/seagull.wav sound/pum_pam.wav sound/tum_tum.wav sound/eight_bit.wav sound/gps.wav sound/eagle.wav sound/parrot.wav sound/trace.wav sound/duck.wav sound/chicken.wav sound/woodpecker.wav
+                    EMBED_FILES sound/error.wav sound/boot_sound.wav image/boot_logo.png sound/knock.wav sound/morse.wav sound/seagull.wav sound/pum_pam.wav sound/tum_tum.wav sound/eight_bit.wav sound/gps.wav sound/eagle.wav sound/parrot.wav sound/trace.wav sound/duck.wav sound/chicken.wav sound/woodpecker.wav sound/cb_press.wav sound/cb_release.wav
                     )
                     
                     

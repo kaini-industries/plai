@@ -49,11 +49,11 @@ static const char* HINT_NBR_LIST_FN = "[\u2191]HOME [\u2193]END";
 static const std::vector<std::string> sort_labels = {
     "None", "Short name", "Long name", "Role", "Signal", "Hops away", "Last seen", "Favorites first"};
 
+using UTILS::TEXT::count_wrapped_lines;
 using UTILS::TEXT::utf8_char_count;
 using UTILS::TEXT::utf8_char_len;
 using UTILS::TEXT::utf8_truncate_len;
 using UTILS::TEXT::wrap_text;
-using UTILS::TEXT::count_wrapped_lines;
 
 // UI Constants - compact layout matching flood app
 #define SCROLL_BAR_WIDTH 4
@@ -1822,23 +1822,17 @@ void AppNodes::_handle_node_list_input()
             _data.hal->playNextSound();
             _data.hal->keyboard()->waitForRelease(KEY_NUM_ENTER);
 
-            if (_data.total_node_count > 0 && _data.hal->nodedb())
+            if (_selected_node_valid())
             {
-                // Load the selected node from storage
-                _data.selected_node_valid = _data.hal->nodedb()->getNodeByIndex(_data.selected_index, _data.selected_node);
-
-                if (_data.selected_node_valid)
+                _data.selected_node_id = _data.selected_node.info.num;
+                _data.detail_scroll = 0;
+                if (keys_state.fn)
                 {
-                    _data.selected_node_id = _data.selected_node.info.num;
-                    _data.detail_scroll = 0;
-                    if (keys_state.fn)
-                    {
-                        _data.view_state = ViewState::NODE_DETAIL;
-                        _data.update_list = true;
-                    }
-                    else
-                        _data.view_state = ViewState::DIRECT_MESSAGE;
+                    _data.view_state = ViewState::NODE_DETAIL;
+                    _data.update_list = true;
                 }
+                else
+                    _data.view_state = ViewState::DIRECT_MESSAGE;
             }
         }
         else if (_data.hal->keyboard()->isKeyPressing(KEY_NUM_F))
@@ -1846,26 +1840,31 @@ void AppNodes::_handle_node_list_input()
             _data.hal->playNextSound();
             _data.hal->keyboard()->waitForRelease(KEY_NUM_F);
 
-            if (keys_state.fn)
+            if (_selected_node_valid())
             {
-                // Open favorites list view
-                _data.fav_total_count = Mesh::favorites_get_count();
-                _data.fav_selected_index = 0;
-                _data.fav_scroll_offset = 0;
-                _data.view_state = ViewState::FAVORITE_LIST;
-                _data.update_list = true;
-            }
-            else if (_data.total_node_count > 0 && _data.hal->nodedb())
-            {
-                Mesh::NodeInfo node;
-                if (_data.hal->nodedb()->getNodeByIndex(_data.selected_index, node))
+                if (keys_state.fn)
                 {
-                    bool new_favorite = !node.info.is_favorite;
-                    _data.hal->nodedb()->setFavorite(node.info.num, new_favorite);
+                    // Open favorites list view
+                    _data.fav_total_count = Mesh::favorites_get_count();
+                    _data.fav_selected_index = 0;
+                    _data.fav_scroll_offset = 0;
+                    _data.view_state = ViewState::FAVORITE_LIST;
+                    _data.update_list = true;
+                }
+                else
+                {
+                    bool new_favorite = !_data.selected_node.info.is_favorite;
+                    _data.hal->nodedb()->setFavorite(_data.selected_node.info.num, new_favorite);
                     if (new_favorite)
-                        Mesh::favorites_add(node.info.num);
+                    {
+                        Mesh::favorites_add(_data.selected_node.info.num);
+                        _data.hal->playNotificationSound(HAL::Hal::NotificationSound::CB_PRESS);
+                    }
                     else
-                        Mesh::favorites_remove(node.info.num);
+                    {
+                        Mesh::favorites_remove(_data.selected_node.info.num);
+                        _data.hal->playNotificationSound(HAL::Hal::NotificationSound::CB_RELEASE);
+                    }
                     _data.update_list = true;
                 }
             }
@@ -1893,10 +1892,12 @@ void AppNodes::_handle_node_list_input()
                     if (new_ignored)
                     {
                         Mesh::ignorelist_add(_data.selected_node.info.num);
+                        _data.hal->playNotificationSound(HAL::Hal::NotificationSound::CB_PRESS);
                     }
                     else
                     {
                         Mesh::ignorelist_remove(_data.selected_node.info.num);
+                        _data.hal->playNotificationSound(HAL::Hal::NotificationSound::CB_RELEASE);
                     }
                     _data.update_list = true;
                 }

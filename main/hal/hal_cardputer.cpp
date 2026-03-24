@@ -54,6 +54,10 @@ extern const uint8_t chicken_wav_start[] asm("_binary_chicken_wav_start");
 extern const uint8_t chicken_wav_end[] asm("_binary_chicken_wav_end");
 extern const uint8_t woodpecker_wav_start[] asm("_binary_woodpecker_wav_start");
 extern const uint8_t woodpecker_wav_end[] asm("_binary_woodpecker_wav_end");
+extern const uint8_t cb_press_wav_start[] asm("_binary_cb_press_wav_start");
+extern const uint8_t cb_press_wav_end[] asm("_binary_cb_press_wav_end");
+extern const uint8_t cb_release_wav_start[] asm("_binary_cb_release_wav_start");
+extern const uint8_t cb_release_wav_end[] asm("_binary_cb_release_wav_end");
 
 static const std::vector<const uint8_t*> NOTIFICATION_SOUNDS = {
     nullptr,
@@ -71,6 +75,8 @@ static const std::vector<const uint8_t*> NOTIFICATION_SOUNDS = {
     knock_wav_start,
     gps_wav_start,
     trace_wav_start,
+    cb_press_wav_start,
+    cb_release_wav_start,
 };
 static const std::vector<int32_t> NOTIFICATION_SOUNDS_LENGTH = {
     0,
@@ -88,6 +94,8 @@ static const std::vector<int32_t> NOTIFICATION_SOUNDS_LENGTH = {
     knock_wav_end - knock_wav_start,
     gps_wav_end - gps_wav_start,
     trace_wav_end - trace_wav_start,
+    cb_press_wav_end - cb_press_wav_start,
+    cb_release_wav_end - cb_release_wav_start,
 };
 #endif
 

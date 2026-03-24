@@ -237,6 +237,8 @@ namespace HAL
             KNOCK = 12,
             GPS = 13,
             TRACE = 14,
+            CB_PRESS = 15,
+            CB_RELEASE = 16,
         };
 
         virtual void playLastSound() {}
