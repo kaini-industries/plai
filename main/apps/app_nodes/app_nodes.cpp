@@ -1995,7 +1995,11 @@ void AppNodes::_handle_node_list_input()
                     if (_data.hal->nodedb()->getNodeByIndex(_data.selected_index, node))
                     {
                         std::string title = Mesh::NodeDB::getLongLabel(node);
-                        if (UTILS::UI::show_confirmation_dialog(_data.hal, title, "Exchange node information?", "Send", "Cancel"))
+                        if (UTILS::UI::show_confirmation_dialog(_data.hal,
+                                                                title,
+                                                                "Exchange node information?",
+                                                                "Send",
+                                                                "Cancel"))
                         {
                             _data.hal->mesh()->sendNodeInfo(node.info.num, node.info.channel, true);
                         }
@@ -3526,6 +3530,7 @@ bool AppNodes::_render_neighbor_list()
         _data.nbr_scroll_offset = _data.nbr_selected_index - max_visible + 1;
 
     auto* nodedb = _data.hal->nodedb();
+    auto* mesh = _data.hal->mesh();
     const int id_col_width = 10 * 6 + 4;
     const int name_x = id_col_width + 4;
 
@@ -3547,10 +3552,10 @@ bool AppNodes::_render_neighbor_list()
         canvas->drawString(id_str.c_str(), 4, y + 1);
 
         std::string label = "<not found>";
-        if (nodedb)
+        Mesh::NodeInfo ni;
+        if (mesh && mesh->getNode(nbr.node_id, ni))
         {
-            Mesh::NodeInfo ni;
-            if (nodedb->getNode(nbr.node_id, ni))
+            if (mesh->getNode(nbr.node_id, ni))
                 label = Mesh::NodeDB::getLongLabel(ni);
         }
         canvas->setTextColor(fg, bg);
