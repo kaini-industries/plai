@@ -991,10 +991,21 @@ namespace UTILS
             return result;
         }
 
-        int
-        show_select_dialog(HAL::Hal* hal, const std::string& title, const std::vector<std::string>& items, int default_index)
+        int show_select_dialog(
+            HAL::Hal* hal, const std::string& title, const std::vector<std::string>& items, int default_index)
         {
-            if (items.empty())
+            constexpr size_t MAX_DIALOG_ITEMS = 32;
+            const char* ptrs[MAX_DIALOG_ITEMS];
+            size_t count = std::min(items.size(), MAX_DIALOG_ITEMS);
+            for (size_t i = 0; i < count; i++)
+                ptrs[i] = items[i].c_str();
+            return show_select_dialog(hal, title, ptrs, count, default_index);
+        }
+
+        int show_select_dialog(
+            HAL::Hal* hal, const std::string& title, const char* const* items, size_t item_count, int default_index)
+        {
+            if (item_count == 0)
             {
                 return -1;
             }
@@ -1004,7 +1015,7 @@ namespace UTILS
             int brightness = hal->settings()->getNumber("system", "brightness");
             hal->display()->setBrightness(brightness == 0 ? 100 : brightness);
 
-            int selected_index = default_index >= 0 && default_index < items.size() ? default_index : 0;
+            int selected_index = default_index >= 0 && default_index < (int)item_count ? default_index : 0;
             bool selecting = true;
             int scroll_offset = 0;
             int line_height = hal->canvas()->fontHeight(FONT_16) + 2 + 1;
@@ -1058,7 +1069,7 @@ namespace UTILS
                     // Draw list of items (only when selection changed)
                     hal->canvas()->setFont(FONT_16);
                     int y_offset = y_start;
-                    for (int i = scroll_offset; i < items.size() && i < scroll_offset + max_visible_items; i++)
+                    for (int i = scroll_offset; i < (int)item_count && i < scroll_offset + max_visible_items; i++)
                     {
                         if (i == selected_index)
                         {
@@ -1074,11 +1085,11 @@ namespace UTILS
                             hal->canvas()->setTextColor(THEME_COLOR_UNSELECTED, THEME_COLOR_BG);
                         }
 
-                        bool text_fits = hal->canvas()->textWidth(items[i].c_str()) <= text_area_width;
+                        bool text_fits = hal->canvas()->textWidth(items[i]) <= text_area_width;
                         if (i == selected_index && !text_fits)
                         {
                             UTILS::SCROLL_TEXT::scroll_text_render(&item_scroll_ctx,
-                                                                   items[i].c_str(),
+                                                                   items[i],
                                                                    text_x,
                                                                    y_offset + 1,
                                                                    THEME_COLOR_SELECTED,
@@ -1086,7 +1097,7 @@ namespace UTILS
                         }
                         else
                         {
-                            std::string display_name = items[i];
+                            std::string display_name(items[i]);
                             if (!text_fits)
                             {
                                 int char_w = hal->canvas()->textWidth("0");
@@ -1103,7 +1114,7 @@ namespace UTILS
                                               y_start,
                                               scrollbar_width,
                                               scrollbar_height,
-                                              (int)items.size(),
+                                              (int)item_count,
                                               max_visible_items,
                                               scroll_offset);
                 }
@@ -1114,12 +1125,12 @@ namespace UTILS
                     if (sel_vis >= 0 && sel_vis < max_visible_items)
                     {
                         int sel_y = y_start + sel_vis * line_height + 1;
-                        bool text_fits = hal->canvas()->textWidth(items[selected_index].c_str()) <= text_area_width;
+                        bool text_fits = hal->canvas()->textWidth(items[selected_index]) <= text_area_width;
                         if (!text_fits)
                         {
                             hal->canvas()->setFont(FONT_16);
                             need_update |= UTILS::SCROLL_TEXT::scroll_text_render(&item_scroll_ctx,
-                                                                                  items[selected_index].c_str(),
+                                                                                  items[selected_index],
                                                                                   text_x,
                                                                                   sel_y,
                                                                                   THEME_COLOR_SELECTED,
@@ -1174,7 +1185,7 @@ namespace UTILS
                         if (!key_repeat_check(is_repeat, next_fire_ts, millis()))
                             continue;
 
-                        if (selected_index < items.size() - 1)
+                        if (selected_index < (int)item_count - 1)
                         {
                             hal->playNextSound();
                             selected_index++;
@@ -1193,7 +1204,6 @@ namespace UTILS
                         if (selected_index > 0)
                         {
                             hal->playNextSound();
-                            // Jump up by visible_items count (page up)
                             int jump = max_visible_items;
                             selected_index = std::max(0, selected_index - jump);
                             scroll_offset = std::max(0, selected_index - (max_visible_items - 1));
@@ -1205,12 +1215,12 @@ namespace UTILS
                         if (!key_repeat_check(is_repeat, next_fire_ts, millis()))
                             continue;
 
-                        if (selected_index < items.size() - 1)
+                        if (selected_index < (int)item_count - 1)
                         {
                             hal->playNextSound();
                             int jump = max_visible_items;
-                            selected_index = std::min((int)items.size() - 1, selected_index + jump);
-                            scroll_offset = std::min(std::max(0, (int)items.size() - max_visible_items), selected_index);
+                            selected_index = std::min((int)item_count - 1, selected_index + jump);
+                            scroll_offset = std::min(std::max(0, (int)item_count - max_visible_items), selected_index);
                             need_update = true;
                         }
                     }

@@ -65,7 +65,7 @@ static const char* HINT_EDIT = "[\u2191][\u2193] [Fn] [ENTER] [ESC]";
 static const char* HINT_EDIT_FN = "[ENTER]CUSTOM TEXT";
 
 // Predefined greetings demonstrating macros: #short #long #id #hops #snr #rssi
-static const std::vector<std::string> PREDEF_GREETING_CH = {
+static const char* const PREDEF_GREETING_CH[] = {
     "Off",
     "Hi #short!",
     "Welcome #short! You are #hops hops away from me",
@@ -73,20 +73,25 @@ static const std::vector<std::string> PREDEF_GREETING_CH = {
     "Hello #long, welcome! Signal: #snr dB / #rssi dBm",
     "Hey #short! #hops hops, #snr/#rssi",
 };
-static const std::vector<std::string> PREDEF_GREETING_DM = {
+static constexpr size_t PREDEF_GREETING_CH_COUNT = sizeof(PREDEF_GREETING_CH) / sizeof(PREDEF_GREETING_CH[0]);
+
+static const char* const PREDEF_GREETING_DM[] = {
     "Off",
     "Hi #long (#short)!",
     "Welcome #short! You are #hops hops away",
     "Hello #long! Nice to meet you",
     "Hey #long, I see you with #hops hops #snr dB / #rssi dBm",
 };
-static const std::vector<std::string> PREDEF_PING_REPLY = {
+static constexpr size_t PREDEF_GREETING_DM_COUNT = sizeof(PREDEF_GREETING_DM) / sizeof(PREDEF_GREETING_DM[0]);
+
+static const char* const PREDEF_PING_REPLY[] = {
     "Off",
     "#short: pong :)",
     "#short: [#hops] #snr dB / #rssi dBm",
     "#long: signal #snr/#rssi",
     "#long: [#hops] #snr dB / #rssi dBm",
 };
+static constexpr size_t PREDEF_PING_REPLY_COUNT = sizeof(PREDEF_PING_REPLY) / sizeof(PREDEF_PING_REPLY[0]);
 
 // UI Constants - matching app_nodes compact layout
 #define SCROLL_BAR_WIDTH 4
@@ -390,17 +395,18 @@ void AppChannels::_send_message(const std::string& text)
 
 // ─── Channel edit helpers ────────────────────────────────────────────────────────
 
-static const std::vector<std::string> KEY_TYPE_OPTIONS = {"None", "Default", "8 bit", "128 bit", "256 bit"};
+static const char* const KEY_TYPE_OPTIONS[] = {"None", "Default", "8 bit", "128 bit", "256 bit"};
+static constexpr size_t KEY_TYPE_OPTIONS_COUNT = sizeof(KEY_TYPE_OPTIONS) / sizeof(KEY_TYPE_OPTIONS[0]);
 
-static const std::vector<std::string> NOTIFICATION_OPTIONS = {
+static const char* const NOTIFICATION_OPTIONS[] = {
     "Off", "Default", "Morse", "Seagull", "Tum-tum", "Pum-pam", "8 bit", "Eagle", "Parrot", "Duck", "Chicken", "Woodpecker"};
+static constexpr size_t NOTIFICATION_OPTIONS_COUNT = sizeof(NOTIFICATION_OPTIONS) / sizeof(NOTIFICATION_OPTIONS[0]);
 
 static const char* notification_label(uint32_t index)
 {
-
-    if (index >= NOTIFICATION_OPTIONS.size())
+    if (index >= NOTIFICATION_OPTIONS_COUNT)
         index = 0;
-    return NOTIFICATION_OPTIONS[index].c_str();
+    return NOTIFICATION_OPTIONS[index];
 }
 
 static void psk_from_key_type(const std::string& type, meshtastic_ChannelSettings_psk_t& psk)
@@ -488,9 +494,9 @@ static const std::vector<EditItem> EDIT_ITEMS = {
      },
      [](AppChannels* app, meshtastic_Channel& ch)
      {
-         static const std::vector<std::string> opts = {"Primary", "Secondary", "Disabled"};
+         static const char* const opts[] = {"Primary", "Secondary", "Disabled"};
          int cur = ch.role == meshtastic_Channel_Role_PRIMARY ? 0 : ch.role == meshtastic_Channel_Role_SECONDARY ? 1 : 2;
-         int res = UTILS::UI::show_select_dialog(app->get_hal(), "Role", opts, cur);
+         int res = UTILS::UI::show_select_dialog(app->get_hal(), "Role", opts, 3, cur);
          if (res == 0)
              ch.role = meshtastic_Channel_Role_PRIMARY;
          else if (res == 1)
@@ -506,10 +512,10 @@ static const std::vector<EditItem> EDIT_ITEMS = {
      {
          // use deprecated channel_num field for notification
          uint32_t cur = ch.settings.channel_num;
-         if (cur >= (int)NOTIFICATION_OPTIONS.size())
+         if (cur >= NOTIFICATION_OPTIONS_COUNT)
              cur = 0;
-         int res = UTILS::UI::show_select_dialog(app->get_hal(), "Notification", NOTIFICATION_OPTIONS, (int)cur);
-         if (res >= 0 && res < (int)NOTIFICATION_OPTIONS.size())
+         int res = UTILS::UI::show_select_dialog(app->get_hal(), "Notification", NOTIFICATION_OPTIONS, NOTIFICATION_OPTIONS_COUNT, (int)cur);
+         if (res >= 0 && res < (int)NOTIFICATION_OPTIONS_COUNT)
              ch.settings.channel_num = (uint32_t)res;
          if (res > 0)
              app->get_hal()->playNotificationSound(res);
@@ -522,14 +528,14 @@ static const std::vector<EditItem> EDIT_ITEMS = {
      {
          std::string cur = key_type_from_psk(ch.settings.psk);
          int cur_idx = 0;
-         for (int i = 0; i < (int)KEY_TYPE_OPTIONS.size(); i++)
-             if (KEY_TYPE_OPTIONS[i] == cur)
+         for (int i = 0; i < (int)KEY_TYPE_OPTIONS_COUNT; i++)
+             if (cur == KEY_TYPE_OPTIONS[i])
              {
                  cur_idx = i;
                  break;
              }
-         int res = UTILS::UI::show_select_dialog(app->get_hal(), "Key type", KEY_TYPE_OPTIONS, cur_idx);
-         if (res >= 0 && res < (int)KEY_TYPE_OPTIONS.size())
+         int res = UTILS::UI::show_select_dialog(app->get_hal(), "Key type", KEY_TYPE_OPTIONS, KEY_TYPE_OPTIONS_COUNT, cur_idx);
+         if (res >= 0 && res < (int)KEY_TYPE_OPTIONS_COUNT)
              psk_from_key_type(KEY_TYPE_OPTIONS[res], ch.settings.psk);
      }},
     {"Key",
@@ -601,20 +607,20 @@ static const std::vector<EditItem> EDIT_ITEMS = {
          else
          {
              int cur = 0;
-             for (size_t i = 0; i < PREDEF_GREETING_CH.size(); i++)
+             for (size_t i = 0; i < PREDEF_GREETING_CH_COUNT; i++)
              {
-                 if (PREDEF_GREETING_CH[i] == text || (PREDEF_GREETING_CH[i] == "Off" && text.empty()))
+                 if (text == PREDEF_GREETING_CH[i] || (strcmp(PREDEF_GREETING_CH[i], "Off") == 0 && text.empty()))
                  {
                      cur = (int)i;
                      break;
                  }
              }
-             int sel = UTILS::UI::show_select_dialog(app->get_hal(), "Greeting on channel:", PREDEF_GREETING_CH, cur);
+             int sel = UTILS::UI::show_select_dialog(app->get_hal(), "Greeting on channel:", PREDEF_GREETING_CH, PREDEF_GREETING_CH_COUNT, cur);
              if (sel >= 0)
              {
                  memset(g.channel_text, 0, sizeof(g.channel_text));
                  strncpy(g.channel_text,
-                         (PREDEF_GREETING_CH[sel] == "Off" ? "" : PREDEF_GREETING_CH[sel].c_str()),
+                         (strcmp(PREDEF_GREETING_CH[sel], "Off") == 0 ? "" : PREDEF_GREETING_CH[sel]),
                          sizeof(g.channel_text) - 1);
              }
          }
@@ -645,20 +651,20 @@ static const std::vector<EditItem> EDIT_ITEMS = {
          else
          {
              int cur = 0;
-             for (size_t i = 0; i < PREDEF_GREETING_DM.size(); i++)
+             for (size_t i = 0; i < PREDEF_GREETING_DM_COUNT; i++)
              {
-                 if (PREDEF_GREETING_DM[i] == text || (PREDEF_GREETING_DM[i] == "Off" && text.empty()))
+                 if (text == PREDEF_GREETING_DM[i] || (strcmp(PREDEF_GREETING_DM[i], "Off") == 0 && text.empty()))
                  {
                      cur = (int)i;
                      break;
                  }
              }
-             int sel = UTILS::UI::show_select_dialog(app->get_hal(), "Greeting on DM:", PREDEF_GREETING_DM, cur);
+             int sel = UTILS::UI::show_select_dialog(app->get_hal(), "Greeting on DM:", PREDEF_GREETING_DM, PREDEF_GREETING_DM_COUNT, cur);
              if (sel >= 0)
              {
                  memset(g.dm_text, 0, sizeof(g.dm_text));
                  strncpy(g.dm_text,
-                         (PREDEF_GREETING_DM[sel] == "Off" ? "" : PREDEF_GREETING_DM[sel].c_str()),
+                         (strcmp(PREDEF_GREETING_DM[sel], "Off") == 0 ? "" : PREDEF_GREETING_DM[sel]),
                          sizeof(g.dm_text) - 1);
              }
          }
@@ -689,20 +695,20 @@ static const std::vector<EditItem> EDIT_ITEMS = {
          else
          {
              int cur = 0;
-             for (size_t i = 0; i < PREDEF_PING_REPLY.size(); i++)
+             for (size_t i = 0; i < PREDEF_PING_REPLY_COUNT; i++)
              {
-                 if (PREDEF_PING_REPLY[i] == text || (PREDEF_PING_REPLY[i] == "Off" && text.empty()))
+                 if (text == PREDEF_PING_REPLY[i] || (strcmp(PREDEF_PING_REPLY[i], "Off") == 0 && text.empty()))
                  {
                      cur = (int)i;
                      break;
                  }
              }
-             int sel = UTILS::UI::show_select_dialog(app->get_hal(), "Ping reply:", PREDEF_PING_REPLY, cur);
+             int sel = UTILS::UI::show_select_dialog(app->get_hal(), "Ping reply:", PREDEF_PING_REPLY, PREDEF_PING_REPLY_COUNT, cur);
              if (sel >= 0)
              {
                  memset(g.ping_text, 0, sizeof(g.ping_text));
                  strncpy(g.ping_text,
-                         (PREDEF_PING_REPLY[sel] == "Off" ? "" : PREDEF_PING_REPLY[sel].c_str()),
+                         (strcmp(PREDEF_PING_REPLY[sel], "Off") == 0 ? "" : PREDEF_PING_REPLY[sel]),
                          sizeof(g.ping_text) - 1);
              }
          }

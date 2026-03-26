@@ -46,8 +46,9 @@ static const char* HINT_NBR_LIST = "[Fn] [\u2191][\u2193][\u2190][\u2192] [ESC] 
 static const char* HINT_NBR_LIST_FN = "[\u2191]HOME [\u2193]END";
 
 // Sort order selection dialog
-static const std::vector<std::string> sort_labels = {
+static const char* const sort_labels[] = {
     "None", "Short name", "Long name", "Role", "Signal", "Hops away", "Last seen", "Favorites first"};
+static constexpr size_t sort_labels_count = sizeof(sort_labels) / sizeof(sort_labels[0]);
 
 using UTILS::TEXT::count_wrapped_lines;
 using UTILS::TEXT::utf8_char_count;
@@ -2040,8 +2041,8 @@ void AppNodes::_handle_node_list_input()
             _data.hal->keyboard()->waitForRelease(KEY_NUM_TAB);
 
             int current = static_cast<int>(_data.sort_order);
-            int result = UTILS::UI::show_select_dialog(_data.hal, "Select sort order", sort_labels, current);
-            if (result >= 0 && result < static_cast<int>(sort_labels.size()))
+            int result = UTILS::UI::show_select_dialog(_data.hal, "Select sort order", sort_labels, sort_labels_count, current);
+            if (result >= 0 && result < (int)sort_labels_count)
             {
                 _apply_sort_order(static_cast<Mesh::SortOrder>(result));
             }
