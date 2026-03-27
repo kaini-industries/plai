@@ -97,13 +97,28 @@ namespace UTILS
             struct tm ti;
             time_t ts = (time_t)timestamp;
             localtime_r(&ts, &ti);
-            // char buf[20];
-            // snprintf(buf, sizeof(buf), "%02d.%02d.%04d %02d:%02d",
-            //          ti.tm_mday, ti.tm_mon + 1, ti.tm_year + 1900,
-            //          ti.tm_hour, ti.tm_min);
-            return std::format("{:02d}.{:02d}.{:04d} {:02d}:{:02d}",
-                ti.tm_mday, ti.tm_mon + 1, ti.tm_year + 1900,
-                ti.tm_hour, ti.tm_min);
+
+            time_t now = time(nullptr);
+            struct tm now_tm;
+            localtime_r(&now, &now_tm);
+
+            std::string time_str = std::format("{:02d}:{:02d}", ti.tm_hour, ti.tm_min);
+
+            if (ti.tm_year == now_tm.tm_year && ti.tm_yday == now_tm.tm_yday)
+                return time_str;
+
+            int days_ago = (now_tm.tm_year - ti.tm_year) * 365 + now_tm.tm_yday - ti.tm_yday;
+            if (days_ago > 0 && days_ago < 7)
+            {
+                static constexpr const char* days[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+                return std::format("{} {}", days[ti.tm_wday], time_str);
+            }
+
+            if (ti.tm_year == now_tm.tm_year)
+                return std::format("{:02d}.{:02d} {}", ti.tm_mday, ti.tm_mon + 1, time_str);
+
+            return std::format("{:02d}.{:02d}.{:04d} {}",
+                ti.tm_mday, ti.tm_mon + 1, ti.tm_year + 1900, time_str);
         }
 
     } // namespace TEXT

@@ -119,7 +119,7 @@ namespace UTILS
         // Count wrapped lines without allocating strings (UTF-8 aware)
         uint16_t count_wrapped_lines(const std::string& text, int chars_per_line);
 
-        // Format a unix timestamp as "dd.mm.yyyy hh:mm"
+        // Format a unix timestamp compactly: "HH:MM" today, "Mon HH:MM" this week, "dd.mm HH:MM" this year, else "dd.mm.yyyy HH:MM"
         std::string format_timestamp(uint32_t timestamp);
 
     } // namespace TEXT
