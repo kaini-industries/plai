@@ -59,7 +59,7 @@ static std::vector<uint8_t> base64_decode(const std::string& b64)
 // Hint strings for control hints
 static const char* HINT_LIST = "[Fn] [\u2191][\u2193][\u2190][\u2192] [ENTER][DEL] [ESC]";
 static const char* HINT_LIST_FN = "[ENTER]EDIT [SPACE]NEW";
-static const char* HINT_CHAT = "[^]INFO [\u2191][\u2193][\u2190][\u2192] [ENTER][DEL] [ESC]";
+static const char* HINT_CHAT = "[^]INFO [\u2191][\u2193][\u2190][\u2192] [T] [ENTER][DEL] [ESC]";
 static const char* HINT_CHAT_FN = "[\u2191]HOME [\u2193]END";
 static const char* HINT_EDIT = "[\u2191][\u2193] [Fn] [ENTER] [ESC]";
 static const char* HINT_EDIT_FN = "[ENTER]CUSTOM TEXT";
@@ -1469,6 +1469,39 @@ void AppChannels::_handle_channel_chat_input()
                     auto* canvas = _data.hal->canvas();
                     int max_visible = (canvas->height() - CHAT_HEADER_HEIGHT - CHAT_FOOTER_HEIGHT) / (CHAT_ITEM_HEIGHT + 1);
                     _data.chat_cur_line = _data.chat_total_lines > max_visible ? _data.chat_total_lines - max_visible : 0;
+                }
+            }
+            _data.update_list = true;
+        }
+        else if (_data.hal->keyboard()->isKeyPressing(KEY_NUM_T))
+        {
+            _data.hal->playNextSound();
+            _data.hal->keyboard()->waitForRelease(KEY_NUM_T);
+
+            auto templates = Mesh::load_message_templates();
+            if (templates.empty())
+            {
+                UTILS::UI::show_error_dialog(_data.hal, "Templates", "No templates found");
+            }
+            else
+            {
+                int sel = UTILS::UI::show_select_dialog(_data.hal, "Message template:", templates, 0);
+                if (sel >= 0 && sel < (int)templates.size())
+                {
+                    std::string message_text = templates[(size_t)sel];
+                    std::string title = std::format("Message to: #{}", _data.selected_channel_name);
+                    if (UTILS::UI::show_edit_string_dialog(_data.hal, title, message_text, false, 200))
+                    {
+                        if (!message_text.empty())
+                        {
+                            _send_message(message_text);
+                            auto* canvas = _data.hal->canvas();
+                            int max_visible =
+                                (canvas->height() - CHAT_HEADER_HEIGHT - CHAT_FOOTER_HEIGHT) / (CHAT_ITEM_HEIGHT + 1);
+                            _data.chat_cur_line =
+                                _data.chat_total_lines > max_visible ? _data.chat_total_lines - max_visible : 0;
+                        }
+                    }
                 }
             }
             _data.update_list = true;
