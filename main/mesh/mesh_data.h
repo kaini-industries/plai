@@ -32,6 +32,7 @@ namespace Mesh
      * @brief Storage path for traceroute results
      */
     constexpr const char* TRACEROUTE_DIR = "/sdcard/meshtastic/traceroute";
+    constexpr const char* TEMPLATES_FILE = "/sdcard/meshtastic/templates.txt";
 
     /**
      * @brief Message file constants
@@ -524,6 +525,8 @@ namespace Mesh
 
         static constexpr size_t MAX_GRAPH_POINTS = 60; // 1 hour at 1 point/min
     };
+
+    std::vector<std::string> load_message_templates();
 
 } // namespace Mesh
 

@@ -1311,4 +1311,43 @@ namespace Mesh
         return ok;
     }
 
+    //--------------------------------------------------------------------------
+    // Message templates
+    //--------------------------------------------------------------------------
+
+    std::vector<std::string> load_message_templates()
+    {
+        static const std::vector<std::string> defaults = {"Hi \U0001F600",
+                                                          "How do u do?",
+                                                          "Good night \U0001F4AB",
+                                                          "Bye bye \U0001F60E"};
+
+        FILE* f = fopen(TEMPLATES_FILE, "r");
+        if (!f)
+        {
+            f = fopen(TEMPLATES_FILE, "w");
+            if (f)
+            {
+                for (const auto& t : defaults)
+                    fprintf(f, "%s\n", t.c_str());
+                fclose(f);
+            }
+            return defaults;
+        }
+
+        std::vector<std::string> templates;
+        char line[256];
+        while (fgets(line, sizeof(line), f))
+        {
+            size_t len = strlen(line);
+            while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r'))
+                line[--len] = '\0';
+            if (len > 0)
+                templates.push_back(line);
+        }
+        fclose(f);
+
+        return templates.empty() ? defaults : templates;
+    }
+
 } // namespace Mesh
