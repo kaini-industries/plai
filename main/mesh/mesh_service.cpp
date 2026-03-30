@@ -344,14 +344,8 @@ namespace Mesh
 
             if (psk_len == 1)
             {
-                const uint8_t shortcut = settings.psk.bytes[0];
-                if (shortcut < 1 || shortcut > 10)
-                {
-                    return false;
-                }
-
                 memcpy(key, kDefaultPsk, sizeof(kDefaultPsk));
-                key[sizeof(kDefaultPsk) - 1] = (uint8_t)(key[sizeof(kDefaultPsk) - 1] + (shortcut - 1));
+                key[sizeof(kDefaultPsk) - 1] = (uint8_t)(key[sizeof(kDefaultPsk) - 1] + (settings.psk.bytes[0] - 1));
                 key_len = sizeof(kDefaultPsk);
                 return true;
             }
