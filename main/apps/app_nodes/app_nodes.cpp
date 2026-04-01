@@ -50,6 +50,8 @@ static const char* HINT_NBR_LIST = "[Fn] [\u2191][\u2193][\u2190][\u2192] [ESC] 
 static const char* HINT_NBR_LIST_FN = "[\u2191]HOME [\u2193]END";
 static const char* HINT_QM_LIST = "[Fn] [\u2191][\u2193][\u2190][\u2192] [A]DD [DEL] [ENTER] [ESC]";
 static const char* HINT_QM_LIST_FN = "[\u2191]HOME [\u2193]END";
+static const char* HINT_MAP = "[Fn] [\u2190][\u2192][\u2191][\u2193] [C] [ENTER] [ESC]";
+static const char* HINT_MAP_FN = "[\u2191][\u2193]ZOOM [C]OUR NODE";
 
 // Sort order selection dialog
 static const char* const sort_labels[] = {
@@ -158,6 +160,7 @@ void AppNodes::onCreate()
 {
     _data.hal = mcAppGetDatabase()->Get("HAL")->value<HAL::Hal*>();
     _data.view_state = ViewState::NODE_LIST;
+    _data.prev_view_state = ViewState::NODE_LIST;
     _data.selected_index = 0;
     _data.scroll_offset = 0;
     _data.total_node_count = 0;
@@ -2102,6 +2105,33 @@ void AppNodes::_handle_node_list_input()
             _data.view_state = ViewState::QUICK_MESSAGES;
             _data.update_list = true;
         }
+        else if (_data.hal->keyboard()->isKeyPressing(KEY_NUM_M))
+        {
+            _data.hal->playNextSound();
+            _data.hal->keyboard()->waitForRelease(KEY_NUM_M);
+
+            if (_selected_node_valid())
+            {
+                _data.selected_node_id = _data.selected_node.info.num;
+                _data.map_center_lat = 0;
+                _data.map_center_lon = 0;
+                _data.map_zoom = 7;
+
+                if (_data.selected_node.info.has_position)
+                {
+                    const auto& pos = _data.selected_node.info.position;
+                    if (pos.latitude_i != 0 || pos.longitude_i != 0)
+                    {
+                        _data.map_center_lat = pos.latitude_i * 1e-7f;
+                        _data.map_center_lon = pos.longitude_i * 1e-7f;
+                    }
+                }
+
+                _data.view_state = ViewState::NODE_MAP;
+                _data.prev_view_state = ViewState::NODE_LIST;
+                _data.update_list = true;
+            }
+        }
         else if (_data.hal->keyboard()->isKeyPressing(KEY_NUM_TAB))
         {
             _data.hal->playNextSound();
@@ -2192,7 +2222,7 @@ void AppNodes::_handle_node_detail_input()
             // Center map on selected node's position, or default to 0,0
             _data.map_center_lat = 0;
             _data.map_center_lon = 0;
-            _data.map_zoom = 10;
+            _data.map_zoom = 7;
 
             if (_data.selected_node_valid && _data.selected_node.info.has_position)
             {
@@ -2205,6 +2235,7 @@ void AppNodes::_handle_node_detail_input()
             }
 
             _data.view_state = ViewState::NODE_MAP;
+            _data.prev_view_state = ViewState::NODE_DETAIL;
             _data.update_list = true;
         }
     }
@@ -4113,9 +4144,6 @@ void AppNodes::_handle_quick_messages_input()
 
 // ========== Node Map View ==========
 
-static const char* HINT_MAP = "[Fn] [\u2190\u2192\u2191\u2193]PAN [C]ENTER [ESC]";
-static const char* HINT_MAP_FN = "[\u2191\u2193]ZOOM [C]OUR NODE";
-
 static constexpr uint32_t MAP_COLOR_BG = 0xD4DADC; // light grey (fallback for missing tiles)
 
 // ===== OSM raster tile map renderer =====
@@ -4217,88 +4245,76 @@ bool AppNodes::_render_node_map()
         }
     }
 
-    // --- Render all nodes with positions as markers ---
+    // --- Render nodes directly from in-memory index (zero I/O) ---
     auto* nodedb = _data.hal->nodedb();
     if (nodedb)
     {
-        size_t total = nodedb->getNodeCount();
         uint32_t our_id = _data.hal->mesh() ? _data.hal->mesh()->getNodeId() : 0;
+        const auto& index = nodedb->getIndex();
 
-        const size_t batch_size = 20;
-        for (size_t offset = 0; offset < total; offset += batch_size)
+        for (const auto& entry : index)
         {
-            std::vector<Mesh::NodeInfo> batch;
-            size_t loaded = nodedb->getNodesInRange(offset, batch_size, batch, _data.sort_order);
+            if (entry.latitude_i == 0 && entry.longitude_i == 0)
+                continue;
 
-            for (size_t i = 0; i < loaded; i++)
+            double nlat = entry.latitude_i * 1e-7;
+            double nlon = entry.longitude_i * 1e-7;
+
+            double npx, npy;
+            _map_latlon_to_pixel(nlat, nlon, z, npx, npy);
+            int nx = (int)(npx - vp_left);
+            int ny = map_y + (int)(npy - vp_top);
+
+            if (nx < -10 || nx > map_w + 10 || ny < map_y - 10 || ny > map_y + map_h + 10)
+                continue;
+
+            bool is_selected = (entry.node_id == _data.selected_node_id);
+            bool is_ours = (entry.node_id == our_id);
+
+            uint32_t marker_color;
+            int marker_r;
+
+            if (is_selected)
             {
-                const auto& node = batch[i];
-                if (!node.info.has_position || (!node.info.position.has_latitude_i && !node.info.position.has_longitude_i))
-                    continue;
-                if (node.info.position.latitude_i == 0 && node.info.position.longitude_i == 0)
-                    continue;
+                marker_color = lgfx::convert_to_rgb888(TFT_ORANGE);
+                marker_r = 4;
+            }
+            else if (is_ours)
+            {
+                marker_color = lgfx::convert_to_rgb888(TFT_CYAN);
+                marker_r = 3;
+            }
+            else
+            {
+                marker_color = _get_node_color(entry.node_id);
+                marker_r = 2;
+            }
 
-                double nlat = node.info.position.latitude_i * 1e-7;
-                double nlon = node.info.position.longitude_i * 1e-7;
+            canvas->fillCircle(nx, ny, marker_r + 1, TFT_BLACK);
+            canvas->fillCircle(nx, ny, marker_r, marker_color);
 
-                double npx, npy;
-                _map_latlon_to_pixel(nlat, nlon, z, npx, npy);
-                int nx = (int)(npx - vp_left);
-                int ny = map_y + (int)(npy - vp_top);
-
-                if (nx < -10 || nx > map_w + 10 || ny < map_y - 10 || ny > map_y + map_h + 10)
-                    continue;
-
-                bool is_selected = (node.info.num == _data.selected_node_id);
-                bool is_ours = (node.info.num == our_id);
-
-                uint32_t marker_color;
-                int marker_r;
-
-                if (is_selected)
-                {
-                    marker_color = lgfx::convert_to_rgb888(TFT_ORANGE);
-                    marker_r = 4;
-                }
-                else if (is_ours)
-                {
-                    marker_color = lgfx::convert_to_rgb888(TFT_CYAN);
-                    marker_r = 3;
-                }
-                else
-                {
-                    marker_color = _get_node_color(node.info.num);
-                    marker_r = 2;
-                }
-
-                canvas->fillCircle(nx, ny, marker_r + 1, TFT_BLACK);
-                canvas->fillCircle(nx, ny, marker_r, marker_color);
-
-                if (is_selected)
-                {
-                    canvas->drawLine(nx - 7, ny, nx - 3, ny, TFT_RED);
-                    canvas->drawLine(nx + 3, ny, nx + 7, ny, TFT_RED);
-                    canvas->drawLine(nx, ny - 7, nx, ny - 3, TFT_RED);
-                    canvas->drawLine(nx, ny + 3, nx, ny + 7, TFT_RED);
-                }
-
-                if (z >= 8 || is_selected)
-                {
-                    const char* label = node.info.user.short_name;
-                    if (label[0] != '\0')
-                    {
-                        int lw = strlen(label) * 6;
-                        int lx = nx + marker_r + 2;
-                        if (lx + lw > map_w)
-                            lx = nx - lw - marker_r - 2;
-                        int ly = ny - 5;
-                        if (ly < map_y)
-                            ly = ny + marker_r + 1;
-                        uint32_t text_color = is_selected ? lgfx::convert_to_rgb888(TFT_ORANGE) : _get_node_text_color(node.info.num);
-                        canvas->setTextColor(text_color);
-                        canvas->drawString(label, lx, ly);
-                    }
-                }
+            if (is_selected)
+            {
+                canvas->drawLine(nx - 7, ny, nx - 3, ny, TFT_ORANGE);
+                canvas->drawLine(nx + 3, ny, nx + 7, ny, TFT_ORANGE);
+                canvas->drawLine(nx, ny - 7, nx, ny - 3, TFT_ORANGE);
+                canvas->drawLine(nx, ny + 3, nx, ny + 7, TFT_ORANGE);
+            }
+            // show labels starting from zoom 8
+            if (z >= 8 || is_selected)
+            {
+                auto label = Mesh::NodeDB::getIndexLabel(entry);
+                int lw = label.length() * 6;
+                int lx = nx + marker_r + 2;
+                if (lx + lw > map_w)
+                    lx = nx - lw - marker_r - 2;
+                int ly = ny - 5;
+                if (ly < map_y)
+                    ly = ny + marker_r + 1;
+                // uint32_t text_color = is_selected ? lgfx::convert_to_rgb888(TFT_ORANGE) :
+                // _get_node_text_color(entry.node_id);
+                canvas->setTextColor(TFT_BLACK);
+                canvas->drawString(label.c_str(), lx, ly);
             }
         }
     }
@@ -4307,13 +4323,13 @@ bool AppNodes::_render_node_map()
     canvas->setFont(FONT_8);
     char z_buf[16];
     snprintf(z_buf, sizeof(z_buf), "z%d", z);
-    canvas->setTextColor(TFT_DARKGREY);
+    canvas->setTextColor(TFT_BLACK);
     canvas->drawString(z_buf, 2, map_y + map_h - 10);
 
     char pos_buf[24];
     snprintf(pos_buf, sizeof(pos_buf), "%.4f,%.4f", _data.map_center_lat, _data.map_center_lon);
     int pw = strlen(pos_buf) * 6;
-    canvas->setTextColor(TFT_DARKGREY);
+    // canvas->setTextColor(TFT_BLACK);
     canvas->drawString(pos_buf, map_w - pw - 2, map_y + map_h - 10);
 
     canvas->setFont(FONT_12);
@@ -4365,11 +4381,17 @@ void AppNodes::_handle_node_map_input()
             _data.map_center_lon = (float)lon;
         };
 
-        if (_data.hal->keyboard()->isKeyPressing(KEY_NUM_ESC))
+        if (_data.hal->keyboard()->isKeyPressing(KEY_NUM_ENTER))
+        {
+            _data.hal->playNextSound();
+            _data.hal->keyboard()->waitForRelease(KEY_NUM_ENTER);
+            _data.update_list = true;
+        }
+        else if (_data.hal->keyboard()->isKeyPressing(KEY_NUM_ESC))
         {
             _data.hal->playNextSound();
             _data.hal->keyboard()->waitForRelease(KEY_NUM_ESC);
-            _data.view_state = ViewState::NODE_DETAIL;
+            _data.view_state = _data.prev_view_state;
             _data.update_list = true;
         }
         else if (_data.hal->keyboard()->isKeyPressing(KEY_NUM_UP))

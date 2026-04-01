@@ -57,13 +57,14 @@ namespace MOONCAKE::APPS
         static constexpr int MAP_TILE_PX = 256;
         static constexpr int MAP_MIN_ZOOM = 2;
         static constexpr int MAP_MAX_ZOOM = 15;
-        static constexpr const char* MAP_TILE_DIR = "/sdcard/map/tiles";
+        static constexpr const char* MAP_TILE_DIR = "/sdcard/map";
 
     private:
         struct
         {
             HAL::Hal* hal;
             ViewState view_state;
+            ViewState prev_view_state;
 
             // Node list state (no longer stores all nodes in memory)
             int selected_index;
@@ -86,11 +87,11 @@ namespace MOONCAKE::APPS
             int dm_text_width_px;                 // Cached max text pixel width for wrap calculation
             bool dm_ctrl;
             // Traceroute state (file-backed, only visible items loaded)
-            uint32_t tr_total_count;                        // Total records on disk
-            int tr_selected_index;                          // Selected item in log list
-            int tr_scroll_offset;                           // Scroll offset in log list
-            int tr_detail_scroll;                           // Scroll offset in detail view
-            Mesh::TraceRouteResult tr_detail_result;        // Loaded detail for selected item
+            uint32_t tr_total_count;                 // Total records on disk
+            int tr_selected_index;                   // Selected item in log list
+            int tr_scroll_offset;                    // Scroll offset in log list
+            int tr_detail_scroll;                    // Scroll offset in detail view
+            Mesh::TraceRouteResult tr_detail_result; // Loaded detail for selected item
 
             // Favorite list state (file-backed, only visible items loaded)
             size_t fav_total_count;
@@ -178,8 +179,7 @@ namespace MOONCAKE::APPS
         // OSM raster tile map helpers
         static void _map_latlon_to_pixel(double lat, double lon, int zoom, double& px, double& py);
         static void _map_pixel_to_latlon(double px, double py, int zoom, double& lat, double& lon);
-        bool _map_draw_tile(int tx, int ty, int zoom, int screen_x, int screen_y,
-                            int map_w, int map_h, int map_y);
+        bool _map_draw_tile(int tx, int ty, int zoom, int screen_x, int screen_y, int map_w, int map_h, int map_y);
 
         // Helpers
         bool _selected_node_valid();
