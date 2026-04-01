@@ -116,7 +116,7 @@ static void _draw_channel_header(LGFX_Sprite* canvas,
     int badge_width = 14;
 
     canvas->fillRoundRect(LIST_ITEM_LEFT_PADDING, y, badge_width, LIST_ITEM_HEIGHT, 4, ch_color);
-    canvas->setTextColor(TFT_BLACK, ch_color);
+    canvas->setTextColor(TFT_BLACK);
     canvas->drawCenterString(std::format("{}", ch.index).c_str(), LIST_ITEM_LEFT_PADDING + badge_width / 2 - 1, y + 1);
 
     int name_x = LIST_ITEM_LEFT_PADDING + badge_width + 4;
@@ -131,7 +131,7 @@ static void _draw_channel_header(LGFX_Sprite* canvas,
     canvas->pushImage(name_x, y + 1, 12, 12, key_img, TFT_WHITE);
     name_x += 14;
 
-    canvas->setTextColor(title ? TFT_ORANGE : THEME_COLOR_UNSELECTED, THEME_COLOR_BG);
+    canvas->setTextColor(title ? TFT_ORANGE : THEME_COLOR_UNSELECTED);
     canvas->drawString(title ? title : ch.settings.name, name_x, y + 1);
 
     if (right_icon)
@@ -139,7 +139,7 @@ static void _draw_channel_header(LGFX_Sprite* canvas,
 
     if (right_text)
     {
-        canvas->setTextColor(TFT_DARKGREY, THEME_COLOR_BG);
+        canvas->setTextColor(TFT_DARKGREY);
         canvas->drawRightString(right_text, canvas->width() - 2 - 12, y);
     }
 
@@ -851,7 +851,7 @@ bool AppChannels::_render_channel_list()
 
     if (_data.channels.empty())
     {
-        canvas->setTextColor(TFT_DARKGREY, THEME_COLOR_BG);
+        canvas->setTextColor(TFT_DARKGREY);
         canvas->drawCenterString("<no channels>",
                                  panel_x + panel_width / 2,
                                  LIST_HEADER_HEIGHT + (LIST_MAX_VISIBLE_ITEMS / 2) * (LIST_ITEM_HEIGHT + 1));
@@ -884,7 +884,7 @@ bool AppChannels::_render_channel_list()
         uint32_t ch_color = is_primary ? TFT_ORANGE : TFT_CYAN;
         int badge_width = 14;
         canvas->fillRoundRect(LIST_ITEM_LEFT_PADDING, y_offset, badge_width, LIST_ITEM_HEIGHT, 4, ch_color);
-        canvas->setTextColor(TFT_BLACK, ch_color);
+        canvas->setTextColor(TFT_BLACK);
         canvas->drawCenterString(std::format("{}", mc.index).c_str(),
                                  LIST_ITEM_LEFT_PADDING + badge_width / 2 - 1,
                                  y_offset + 1);
@@ -903,16 +903,14 @@ bool AppChannels::_render_channel_list()
         name_x += 14;
 
         // Channel name
-        canvas->setTextColor(is_selected ? THEME_COLOR_SELECTED : THEME_COLOR_UNSELECTED,
-                             is_selected ? THEME_COLOR_BG_SELECTED : THEME_COLOR_BG);
+        canvas->setTextColor(is_selected ? THEME_COLOR_SELECTED : THEME_COLOR_UNSELECTED);
         canvas->drawString(mc.settings.name, name_x, y_offset + 1);
 
         // Channel hash
         if (_data.hal->mesh())
         {
             uint8_t ch_hash = _data.hal->mesh()->getChannelHash(mc.settings);
-            canvas->setTextColor(is_selected ? THEME_COLOR_SELECTED : THEME_COLOR_CHANNEL_HASH,
-                                 is_selected ? THEME_COLOR_BG_SELECTED : THEME_COLOR_BG);
+            canvas->setTextColor(is_selected ? THEME_COLOR_SELECTED : THEME_COLOR_CHANNEL_HASH);
             int name_width = canvas->textWidth(mc.settings.name);
             canvas->drawString(std::format("#{:02X}", ch_hash).c_str(), name_x + name_width + 4, y_offset + 1);
         }
@@ -982,7 +980,7 @@ bool AppChannels::_render_channel_chat()
 
     if (_data.chat_msg_count == 0 || _data.chat_line_counts.empty())
     {
-        canvas->setTextColor(TFT_DARKGREY, THEME_COLOR_BG);
+        canvas->setTextColor(TFT_DARKGREY);
         canvas->drawCenterString("<no messages yet>", canvas->width() / 2, canvas->height() / 2);
     }
     else
@@ -1044,13 +1042,13 @@ bool AppChannels::_render_channel_chat()
                 if (current_line >= _data.chat_cur_line + max_visible)
                     break;
                 // Draw message text line
-                canvas->setTextColor(is_ours && msg.error_code != 0 ? TFT_RED : TFT_WHITE, THEME_COLOR_BG);
+                canvas->setTextColor(is_ours && msg.error_code != 0 ? TFT_RED : TFT_WHITE);
                 canvas->drawString(wrapped[line_idx].c_str(), text_start_x, y + 1);
 
                 // Draw sender name tag only on first line of message
                 if (line_idx == 0)
                 {
-                    canvas->setTextColor(sender_fg, sender_bg);
+                    canvas->setTextColor(sender_fg);
                     if (_data.chat_ctrl)
                     {
                         std::string dt = sender_name + " \u2192 " + UTILS::TEXT::format_timestamp(msg.timestamp);
@@ -1088,9 +1086,8 @@ bool AppChannels::_render_channel_chat()
                         {
                             auto si = UTILS::UI::message_status_info((int)msg.status, msg.error_code);
                             canvas->setFont(FONT_6);
-                            canvas->setTextColor(si.color, sender_bg);
-                            canvas->drawRightString(si.icon, name_col_width + 3, y + 2);
-                            // canvas->fillRect(name_col_width + 1, y + 1, 8, CHAT_ITEM_HEIGHT, THEME_COLOR_BG);
+                            canvas->setTextColor(si.color);
+                            canvas->drawRightString(si.icon, name_col_width + 1, y + 2);
                             canvas->setFont(FONT_12);
                         }
                     }
@@ -1186,8 +1183,7 @@ bool AppChannels::_render_channel_edit()
         if (is_sel)
             canvas->fillRect(2, y + 1, max_width - 2, ITEM_H, THEME_COLOR_BG_SELECTED);
 
-        canvas->setTextColor(is_sel ? THEME_COLOR_SELECTED : lgfx::v1::convert_to_rgb888(item.label_color),
-                             is_sel ? THEME_COLOR_BG_SELECTED : THEME_COLOR_BG);
+        canvas->setTextColor(is_sel ? THEME_COLOR_SELECTED : lgfx::v1::convert_to_rgb888(item.label_color));
         canvas->drawString(item.label, 4, y + 1);
 
         if (item.get_value)
@@ -1208,8 +1204,7 @@ bool AppChannels::_render_channel_edit()
                             val = val.substr(0, max_chars - 1) + ">";
                     }
                 }
-                canvas->setTextColor(is_sel ? THEME_COLOR_SELECTED : lgfx::v1::convert_to_rgb888(TFT_WHITE),
-                                     is_sel ? THEME_COLOR_BG_SELECTED : THEME_COLOR_BG);
+                canvas->setTextColor(is_sel ? THEME_COLOR_SELECTED : lgfx::v1::convert_to_rgb888(TFT_WHITE));
                 canvas->drawRightString(val.c_str(), canvas->width() - 6, y + 1);
             }
         }
