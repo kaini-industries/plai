@@ -55,9 +55,8 @@ namespace MOONCAKE::APPS
 
         // OSM raster tile map constants
         static constexpr int MAP_TILE_PX = 256;
-        static constexpr int MAP_MIN_ZOOM = 2;
+        static constexpr int MAP_MIN_ZOOM = 1;
         static constexpr int MAP_MAX_ZOOM = 15;
-        static constexpr const char* MAP_TILE_DIR = "/sdcard/map";
 
     private:
         struct
@@ -118,6 +117,8 @@ namespace MOONCAKE::APPS
             float map_center_lat;
             float map_center_lon;
             int map_zoom;
+            char map_tile_dir[64];
+            int map_style_idx;
 
             // Sorting
             Mesh::SortOrder sort_order;

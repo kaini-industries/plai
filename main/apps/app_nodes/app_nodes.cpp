@@ -34,6 +34,37 @@
 #include "assets/trace_err.h"
 
 static const char* TAG = "APP_NODES";
+static constexpr const char* MAP_BASE_DIR = "/sdcard/map";
+
+struct MapStyleColors
+{
+    const char* name;
+    uint32_t bg_fallback;
+    uint32_t marker_outline;
+    uint32_t crosshair;
+    uint32_t text_selected;
+    uint32_t text_normal;
+    uint32_t overlay_text;
+};
+
+static constexpr MapStyleColors MAP_STYLES[] = {
+    // name       bg_fallback  outline    crosshair  sel_text   text       overlay
+    {"osm", 0xD4DADC, 0x333333, 0xFF6600, 0xFF6600, 0x333333, 0x666666},
+    {"dark", 0x1A1A2E, 0xCCCCCC, 0xFF6600, 0xFF6600, 0xCCCCCC, 0x888888},
+    {"voyager", 0xE8E0D8, 0x444444, 0xFF6600, 0xFF6600, 0x444444, 0x777777},
+    {"topo", 0xD4DCC8, 0x333333, 0xFF6600, 0xFF6600, 0x333333, 0x000000},
+};
+static constexpr size_t MAP_STYLES_COUNT = sizeof(MAP_STYLES) / sizeof(MAP_STYLES[0]);
+
+static const MapStyleColors& _map_get_style(const char* style_name)
+{
+    for (size_t i = 0; i < MAP_STYLES_COUNT; i++)
+    {
+        if (strcmp(MAP_STYLES[i].name, style_name) == 0)
+            return MAP_STYLES[i];
+    }
+    return MAP_STYLES[1];
+}
 
 static const char* HINT_LIST = "[Fn][\u2191][\u2193][\u2190][\u2192][1..8.F.I.T.R.N.P.Q][DEL][ESC]";
 static const char* HINT_LIST_FN = "[\u2191]HOME [\u2193]END [T][F][I][N][B]";
@@ -50,7 +81,7 @@ static const char* HINT_NBR_LIST = "[Fn] [\u2191][\u2193][\u2190][\u2192] [ESC] 
 static const char* HINT_NBR_LIST_FN = "[\u2191]HOME [\u2193]END";
 static const char* HINT_QM_LIST = "[Fn] [\u2191][\u2193][\u2190][\u2192] [A]DD [DEL] [ENTER] [ESC]";
 static const char* HINT_QM_LIST_FN = "[\u2191]HOME [\u2193]END";
-static const char* HINT_MAP = "[Fn] [\u2190][\u2192][\u2191][\u2193] [C] [ENTER] [ESC]";
+static const char* HINT_MAP = "[Fn] [\u2190][\u2192][\u2191][\u2193] [C] [TAB] [ENTER] [ESC]";
 static const char* HINT_MAP_FN = "[\u2191][\u2193]ZOOM [C]OUR NODE";
 
 static bool last_fn = false;
@@ -2116,6 +2147,15 @@ void AppNodes::_handle_node_list_input()
                 _data.map_center_lon = 0;
                 _data.map_zoom = 7;
 
+                {
+                    std::string style = _data.hal->settings()->getString("system", "map_style");
+                    if (style.empty())
+                        style = "dark";
+                    snprintf(_data.map_tile_dir, sizeof(_data.map_tile_dir), "%s/%s", MAP_BASE_DIR, style.c_str());
+                    const auto& sc = _map_get_style(style.c_str());
+                    _data.map_style_idx = (int)(&sc - MAP_STYLES);
+                }
+
                 if (_data.selected_node.info.has_position)
                 {
                     const auto& pos = _data.selected_node.info.position;
@@ -2218,10 +2258,18 @@ void AppNodes::_handle_node_detail_input()
             _data.hal->playNextSound();
             _data.hal->keyboard()->waitForRelease(KEY_NUM_M);
 
-            // Center map on selected node's position, or default to 0,0
             _data.map_center_lat = 0;
             _data.map_center_lon = 0;
             _data.map_zoom = 7;
+
+            {
+                std::string style = _data.hal->settings()->getString("system", "map_style");
+                if (style.empty())
+                    style = "dark";
+                snprintf(_data.map_tile_dir, sizeof(_data.map_tile_dir), "%s/%s", MAP_BASE_DIR, style.c_str());
+                const auto& sc = _map_get_style(style.c_str());
+                _data.map_style_idx = (int)(&sc - MAP_STYLES);
+            }
 
             if (_data.selected_node_valid && _data.selected_node.info.has_position)
             {
@@ -4123,8 +4171,6 @@ void AppNodes::_handle_quick_messages_input()
 
 // ========== Node Map View ==========
 
-static constexpr uint32_t MAP_COLOR_BG = 0xD4DADC; // light grey (fallback for missing tiles)
-
 // ===== OSM raster tile map renderer =====
 
 void AppNodes::_map_latlon_to_pixel(double lat, double lon, int zoom, double& px, double& py)
@@ -4148,8 +4194,8 @@ bool AppNodes::_map_draw_tile(int tx, int ty, int zoom, int screen_x, int screen
     if (tx < 0 || tx >= n || ty < 0 || ty >= n)
         return false;
 
-    char path[80];
-    snprintf(path, sizeof(path), "%s/%d/%d/%d.jpg", MAP_TILE_DIR, zoom, tx, ty);
+    char path[128];
+    snprintf(path, sizeof(path), "%s/%d/%d/%d.jpg", _data.map_tile_dir, zoom, tx, ty);
 
     auto* canvas = _data.hal->canvas();
 
@@ -4186,7 +4232,8 @@ bool AppNodes::_render_node_map()
     _data.update_list = false;
 
     auto* canvas = _data.hal->canvas();
-    canvas->fillScreen(MAP_COLOR_BG);
+    const auto& mstyle = MAP_STYLES[_data.map_style_idx];
+    canvas->fillScreen(mstyle.bg_fallback);
     canvas->setFont(FONT_12);
 
     const int map_y = 0;
@@ -4269,17 +4316,17 @@ bool AppNodes::_render_node_map()
                 marker_r = 2;
             }
 
-            canvas->fillCircle(nx, ny, marker_r + 1, TFT_BLACK);
+            canvas->fillCircle(nx, ny, marker_r + 1, mstyle.marker_outline);
             canvas->fillCircle(nx, ny, marker_r, marker_color);
 
             if (is_selected)
             {
-                canvas->drawLine(nx - 7, ny, nx - 3, ny, TFT_ORANGE);
-                canvas->drawLine(nx + 3, ny, nx + 7, ny, TFT_ORANGE);
-                canvas->drawLine(nx, ny - 7, nx, ny - 3, TFT_ORANGE);
-                canvas->drawLine(nx, ny + 3, nx, ny + 7, TFT_ORANGE);
+                canvas->drawLine(nx - 7, ny, nx - 3, ny, mstyle.crosshair);
+                canvas->drawLine(nx + 3, ny, nx + 7, ny, mstyle.crosshair);
+                canvas->drawLine(nx, ny - 7, nx, ny - 3, mstyle.crosshair);
+                canvas->drawLine(nx, ny + 3, nx, ny + 7, mstyle.crosshair);
             }
-            // show labels starting from zoom 8
+
             if (z >= 8 || is_selected)
             {
                 auto label = Mesh::NodeDB::getIndexLabel(entry);
@@ -4290,7 +4337,7 @@ bool AppNodes::_render_node_map()
                 int ly = ny - 5;
                 if (ly < map_y)
                     ly = ny + marker_r + 1;
-                canvas->setTextColor(is_selected ? TFT_ORANGE : TFT_BLACK);
+                canvas->setTextColor(is_selected ? mstyle.text_selected : mstyle.text_normal);
                 canvas->drawString(label.c_str(), lx, ly);
             }
         }
@@ -4298,11 +4345,15 @@ bool AppNodes::_render_node_map()
 
     // --- Info overlay ---
     canvas->setFont(FONT_8);
+    canvas->setTextColor(mstyle.overlay_text);
     char z_buf[16];
-    snprintf(z_buf, sizeof(z_buf), "Zoom: %d", z);
-    canvas->setTextColor(TFT_BLACK);
+    // map style
+    snprintf(z_buf, sizeof(z_buf), "Style:%s", MAP_STYLES[_data.map_style_idx].name);
+    canvas->drawString(z_buf, 2, map_y);
+    // zoom
+    snprintf(z_buf, sizeof(z_buf), "Zoom:%d", z);
     canvas->drawString(z_buf, 2, map_y + map_h - 10);
-
+    // center position
     char pos_buf[24];
     snprintf(pos_buf, sizeof(pos_buf), "%.4f, %.4f", _data.map_center_lat, _data.map_center_lon);
     int pw = strlen(pos_buf) * 6;
@@ -4352,7 +4403,17 @@ void AppNodes::_handle_node_map_input()
             _data.map_center_lon = (float)lon;
         };
 
-        if (_data.hal->keyboard()->isKeyPressing(KEY_NUM_ENTER))
+        if (_data.hal->keyboard()->isKeyPressing(KEY_NUM_TAB))
+        {
+            _data.hal->playNextSound();
+            _data.hal->keyboard()->waitForRelease(KEY_NUM_TAB);
+            _data.map_style_idx = (_data.map_style_idx + 1) % MAP_STYLES_COUNT;
+            const auto& s = MAP_STYLES[_data.map_style_idx];
+            snprintf(_data.map_tile_dir, sizeof(_data.map_tile_dir), "%s/%s", MAP_BASE_DIR, s.name);
+            // _data.hal->settings()->setString("system", "map_style", s.name);
+            _data.update_list = true;
+        }
+        else if (_data.hal->keyboard()->isKeyPressing(KEY_NUM_ENTER))
         {
             _data.hal->playNextSound();
             _data.hal->keyboard()->waitForRelease(KEY_NUM_ENTER);
