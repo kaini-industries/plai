@@ -5,7 +5,7 @@
 > _Plai_ is the Ukrainian word for a mountain trail — a reliable path for your data to travel when you're off the beaten track.
 
 <p align="center">
-  <img src="pics/nodes_list.png" width="480" alt="Plai Node List">
+  <img src="pics/nodes_list.png" width="1280" alt="Plai Node List">
 </p>
 
 <p align="center">
