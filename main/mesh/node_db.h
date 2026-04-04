@@ -57,7 +57,7 @@ namespace Mesh
      * @brief Manifest file magic number
      */
     constexpr uint32_t MANIFEST_MAGIC = 0x5844494E; // "NIDX" in little-endian
-    constexpr uint32_t MANIFEST_VERSION = 3;
+    constexpr uint32_t MANIFEST_VERSION = 4;
 
     /**
      * @brief Sort order for node listing
@@ -91,11 +91,15 @@ namespace Mesh
      */
     struct NodeIndexEntry
     {
+        static constexpr uint8_t IS_FAVORITE = 0x01;
+        static constexpr uint8_t IS_IGNORED = 0x02;
+        static constexpr uint8_t IS_UNREAD = 0x04;
+        static constexpr uint8_t IS_EXISTS = 0x08;
+
         uint32_t node_id;    // 4 bytes - Node identifier
         uint32_t last_heard; // 4 bytes - Unix epoch seconds (or uptime seconds pre-sync)
         int16_t last_rssi;   // 2 bytes - For display without full load
-        bool is_favorite;    // 1 byte  - For sorting favorites first
-        bool exists;         // 1 byte  - File exists on disk
+        uint8_t flags;       // 1 byte  - Bitfield: IS_FAVORITE | IS_IGNORED | IS_UNREAD | IS_EXISTS
         char short_name[5];  // 5 bytes - Short name (4 chars + null)
         char long_name[9];   // 9 bytes - Long name prefix (8 chars + null)
         uint8_t role;        // 1 byte  - Device role enum
@@ -235,6 +239,12 @@ namespace Mesh
          * @return Sorted index, or -1 if not found
          */
         int getSortedIndexForNode(uint32_t node_id, SortOrder order) const;
+
+        /**
+         * @brief Invalidate sort cache so next access re-sorts.
+         * Call when external state affecting sort order changes (e.g. unread messages).
+         */
+        void invalidateSort() { _sort_valid = false; }
 
         /**
          * @brief Update or add a node

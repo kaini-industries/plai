@@ -91,7 +91,7 @@ namespace Mesh
         // Sort index by default order
         sortIndex(SortOrder::LAST_HEARD);
 
-        // Migrate favorites: if file is missing, populate from existing is_favorite flags
+        // Migrate favorites: if file is missing, populate from existing flags
         {
             struct stat fav_st;
             if (stat(FAVORITES_FILE, &fav_st) != 0)
@@ -99,7 +99,7 @@ namespace Mesh
                 int migrated = 0;
                 for (const auto& entry : _index)
                 {
-                    if (entry.is_favorite)
+                    if (entry.flags & NodeIndexEntry::IS_FAVORITE)
                     {
                         favorites_add(entry.node_id);
                         migrated++;
@@ -284,7 +284,7 @@ namespace Mesh
                         break;
                     if (fread(&entry.last_rssi, sizeof(entry.last_rssi), 1, file) != 1)
                         break;
-                    if (fread(&entry.is_favorite, sizeof(entry.is_favorite), 1, file) != 1)
+                    if (fread(&entry.flags, sizeof(entry.flags), 1, file) != 1)
                         break;
                     if (fread(&entry.short_name, sizeof(entry.short_name), 1, file) != 1)
                         break;
@@ -304,9 +304,10 @@ namespace Mesh
                     // Verify file exists
                     std::string path = getNodeFilePath(entry.node_id);
                     struct stat st;
-                    entry.exists = (stat(path.c_str(), &st) == 0);
+                    if (stat(path.c_str(), &st) == 0)
+                        entry.flags |= NodeIndexEntry::IS_EXISTS;
 
-                    if (entry.exists)
+                    if (entry.flags & NodeIndexEntry::IS_EXISTS)
                     {
                         _index.push_back(entry);
                     }
@@ -353,7 +354,7 @@ namespace Mesh
             fwrite(&entry.node_id, sizeof(entry.node_id), 1, file);
             fwrite(&entry.last_heard, sizeof(entry.last_heard), 1, file);
             fwrite(&entry.last_rssi, sizeof(entry.last_rssi), 1, file);
-            fwrite(&entry.is_favorite, sizeof(entry.is_favorite), 1, file);
+            fwrite(&entry.flags, sizeof(entry.flags), 1, file);
             fwrite(&entry.short_name, sizeof(entry.short_name), 1, file);
             fwrite(&entry.long_name, sizeof(entry.long_name), 1, file);
             fwrite(&entry.role, sizeof(entry.role), 1, file);
@@ -503,9 +504,13 @@ namespace Mesh
         entry.node_id = node.info.num;
         entry.last_heard = node.info.last_heard;
         entry.last_rssi = node.last_rssi;
-        entry.is_favorite = node.info.is_favorite;
+        entry.flags = 0;
+        if (node.info.is_favorite)
+            entry.flags |= NodeIndexEntry::IS_FAVORITE;
+        if (node.info.is_ignored)
+            entry.flags |= NodeIndexEntry::IS_IGNORED;
 
-        entry.exists = true;
+        entry.flags |= NodeIndexEntry::IS_EXISTS;
         // Sort-relevant fields
         memset(entry.short_name, 0, sizeof(entry.short_name));
         memset(entry.long_name, 0, sizeof(entry.long_name));
@@ -550,8 +555,10 @@ namespace Mesh
                                                _index.end(),
                                                [](const NodeIndexEntry& a, const NodeIndexEntry& b)
                                                {
-                                                   if (a.is_favorite != b.is_favorite)
-                                                       return !a.is_favorite;
+                                                   bool a_fav = a.flags & NodeIndexEntry::IS_FAVORITE;
+                                                   bool b_fav = b.flags & NodeIndexEntry::IS_FAVORITE;
+                                                   if (a_fav != b_fav)
+                                                       return !a_fav;
                                                    return a.last_heard < b.last_heard;
                                                });
                 if (oldest != _index.end())
@@ -684,6 +691,16 @@ namespace Mesh
             return;
         }
 
+        // Refresh IS_UNREAD flags from message store before sorting
+        auto& msg_store = MeshDataStore::getInstance();
+        for (auto& entry : _index)
+        {
+            if (msg_store.getUnreadDMCount(entry.node_id) > 0)
+                entry.flags |= NodeIndexEntry::IS_UNREAD;
+            else
+                entry.flags &= ~NodeIndexEntry::IS_UNREAD;
+        }
+
         _sorted_indices.clear();
         _sorted_indices.reserve(_index.size());
         for (size_t i = 0; i < _index.size(); i++)
@@ -691,31 +708,62 @@ namespace Mesh
             _sorted_indices.push_back(i);
         }
 
+        // Unread-first check shared by all comparators
+        auto unread_cmp = [this](size_t a, size_t b) -> int
+        {
+            bool a_unread = _index[a].flags & NodeIndexEntry::IS_UNREAD;
+            bool b_unread = _index[b].flags & NodeIndexEntry::IS_UNREAD;
+            if (a_unread != b_unread)
+                return a_unread ? -1 : 1;
+            return 0; // both same — fall through to mode-specific order
+        };
+
         switch (order)
         {
         case SortOrder::NONE:
-            // No sorting - keep insertion order
+            std::sort(_sorted_indices.begin(),
+                      _sorted_indices.end(),
+                      [&](size_t a, size_t b)
+                      {
+                          int u = unread_cmp(a, b);
+                          if (u)
+                              return u < 0;
+                          return a < b;
+                      });
             break;
 
         case SortOrder::SHORT_NAME:
             std::sort(_sorted_indices.begin(),
                       _sorted_indices.end(),
-                      [this](size_t a, size_t b)
-                      { return strncasecmp(_index[a].short_name, _index[b].short_name, sizeof(_index[0].short_name)) < 0; });
+                      [&](size_t a, size_t b)
+                      {
+                          int u = unread_cmp(a, b);
+                          if (u)
+                              return u < 0;
+                          return strncasecmp(_index[a].short_name, _index[b].short_name, sizeof(_index[0].short_name)) < 0;
+                      });
             break;
 
         case SortOrder::LONG_NAME:
             std::sort(_sorted_indices.begin(),
                       _sorted_indices.end(),
-                      [this](size_t a, size_t b)
-                      { return strncasecmp(_index[a].long_name, _index[b].long_name, sizeof(_index[0].long_name)) < 0; });
+                      [&](size_t a, size_t b)
+                      {
+                          int u = unread_cmp(a, b);
+                          if (u)
+                              return u < 0;
+                          return strncasecmp(_index[a].long_name, _index[b].long_name, sizeof(_index[0].long_name)) < 0;
+                      });
             break;
 
         case SortOrder::ROLE:
             std::sort(_sorted_indices.begin(),
                       _sorted_indices.end(),
-                      [this](size_t a, size_t b)
+                      [&](size_t a, size_t b)
                       {
+                          int u = unread_cmp(a, b);
+                          if (u)
+                              return u < 0;
                           if (_index[a].role != _index[b].role)
                               return _index[a].role < _index[b].role;
                           return _index[a].last_heard > _index[b].last_heard;
@@ -725,14 +773,23 @@ namespace Mesh
         case SortOrder::SIGNAL:
             std::sort(_sorted_indices.begin(),
                       _sorted_indices.end(),
-                      [this](size_t a, size_t b) { return _index[a].last_rssi > _index[b].last_rssi; });
+                      [&](size_t a, size_t b)
+                      {
+                          int u = unread_cmp(a, b);
+                          if (u)
+                              return u < 0;
+                          return _index[a].last_rssi > _index[b].last_rssi;
+                      });
             break;
 
         case SortOrder::HOPS_AWAY:
             std::sort(_sorted_indices.begin(),
                       _sorted_indices.end(),
-                      [this](size_t a, size_t b)
+                      [&](size_t a, size_t b)
                       {
+                          int u = unread_cmp(a, b);
+                          if (u)
+                              return u < 0;
                           if (_index[a].hops_away != _index[b].hops_away)
                               return _index[a].hops_away < _index[b].hops_away;
                           return _index[a].last_heard > _index[b].last_heard;
@@ -742,18 +799,27 @@ namespace Mesh
         case SortOrder::LAST_HEARD:
             std::sort(_sorted_indices.begin(),
                       _sorted_indices.end(),
-                      [this](size_t a, size_t b) { return _index[a].last_heard > _index[b].last_heard; });
+                      [&](size_t a, size_t b)
+                      {
+                          int u = unread_cmp(a, b);
+                          if (u)
+                              return u < 0;
+                          return _index[a].last_heard > _index[b].last_heard;
+                      });
             break;
 
         case SortOrder::FAVORITES_FIRST:
             std::sort(_sorted_indices.begin(),
                       _sorted_indices.end(),
-                      [this](size_t a, size_t b)
+                      [&](size_t a, size_t b)
                       {
-                          if (_index[a].is_favorite != _index[b].is_favorite)
-                          {
-                              return _index[a].is_favorite;
-                          }
+                          int u = unread_cmp(a, b);
+                          if (u)
+                              return u < 0;
+                          bool a_fav = _index[a].flags & NodeIndexEntry::IS_FAVORITE;
+                          bool b_fav = _index[b].flags & NodeIndexEntry::IS_FAVORITE;
+                          if (a_fav != b_fav)
+                              return a_fav;
                           return _index[a].last_heard > _index[b].last_heard;
                       });
             break;
@@ -764,8 +830,11 @@ namespace Mesh
             int32_t our_lon = _our_lon_i;
             std::sort(_sorted_indices.begin(),
                       _sorted_indices.end(),
-                      [this, our_lat, our_lon](size_t a, size_t b)
+                      [&, our_lat, our_lon](size_t a, size_t b)
                       {
+                          int u = unread_cmp(a, b);
+                          if (u)
+                              return u < 0;
                           bool a_has = (_index[a].latitude_i != 0 || _index[a].longitude_i != 0);
                           bool b_has = (_index[b].latitude_i != 0 || _index[b].longitude_i != 0);
                           if (a_has != b_has)
@@ -896,7 +965,7 @@ namespace Mesh
     bool NodeDB::getNode(uint32_t node_id, NodeInfo& out) const
     {
         const NodeIndexEntry* entry = findIndexEntry(node_id);
-        if (!entry || !entry->exists)
+        if (!entry || !(entry->flags & NodeIndexEntry::IS_EXISTS))
         {
             return false;
         }
@@ -1078,7 +1147,10 @@ namespace Mesh
             NodeIndexEntry* entry = findIndexEntry(node_id);
             if (entry)
             {
-                entry->is_favorite = favorite;
+                if (favorite)
+                    entry->flags |= NodeIndexEntry::IS_FAVORITE;
+                else
+                    entry->flags &= ~NodeIndexEntry::IS_FAVORITE;
                 _sort_valid = false;
             }
             markDirty();
@@ -1097,7 +1169,21 @@ namespace Mesh
 
         node.info.is_ignored = ignored;
 
-        return saveNodeToFile(node);
+        if (saveNodeToFile(node))
+        {
+            NodeIndexEntry* entry = findIndexEntry(node_id);
+            if (entry)
+            {
+                if (ignored)
+                    entry->flags |= NodeIndexEntry::IS_IGNORED;
+                else
+                    entry->flags &= ~NodeIndexEntry::IS_IGNORED;
+                _sort_valid = false;
+            }
+            markDirty();
+            return true;
+        }
+        return false;
     }
 
     //--------------------------------------------------------------------------

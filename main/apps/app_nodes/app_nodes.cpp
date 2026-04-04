@@ -302,6 +302,11 @@ void AppNodes::onRunning()
 
     bool updated = false;
 
+    if (msgstore_changed && _data.hal->nodedb())
+    {
+        _data.hal->nodedb()->invalidateSort();
+    }
+
     switch (_data.view_state)
     {
     case ViewState::NODE_LIST:
