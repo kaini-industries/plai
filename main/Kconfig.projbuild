@@ -33,6 +33,11 @@ menu "HAL Configuration"
         bool "Enable SD card"
         default y
 
+    config HAL_USE_IOEX
+        bool "Enable IO Expander (PI4IOE5V6408)"
+        default y
+        depends on HAL_USE_I2C
+
     config HAL_USE_RADIO
         bool "Enable LoRa radio (SX1262)"
         default y

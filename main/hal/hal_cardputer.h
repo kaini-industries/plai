@@ -47,6 +47,9 @@ namespace HAL
 #if HAL_USE_LED
         void _init_led();
 #endif
+#if HAL_USE_IOEX
+        void _init_ioex();
+#endif
 #if HAL_USE_RADIO
         void _init_radio();
 #endif

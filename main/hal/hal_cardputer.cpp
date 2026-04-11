@@ -14,6 +14,9 @@
 #if HAL_USE_DISPLAY
 #include "display/display.hpp"
 #endif
+#if HAL_USE_IOEX
+#include "ioex/ioex.h"
+#endif
 #if HAL_USE_RADIO
 #include "radio/sx1262.h"
 #endif
@@ -141,19 +144,22 @@ void HalCardputer::_init_i2c()
 
 #if HAL_USE_DISPLAY
 static constexpr size_t EMOJI_CACHE_CAP = 10;
-static struct EmojiCacheEntry {
+static struct EmojiCacheEntry
+{
     uint32_t code = 0;
     uint8_t* data = nullptr;
-    uint32_t len  = 0;
-    int16_t  png_w = 0;
-    int16_t  png_h = 0; // 0 = file missing / invalid
+    uint32_t len = 0;
+    int16_t png_w = 0;
+    int16_t png_h = 0; // 0 = file missing / invalid
 } s_emoji_cache[EMOJI_CACHE_CAP];
 static uint8_t s_emoji_cache_n = 0;
 
 static const EmojiCacheEntry* emoji_cache_lookup(uint32_t code)
 {
-    for (uint8_t i = 0; i < s_emoji_cache_n; i++) {
-        if (s_emoji_cache[i].code == code) return &s_emoji_cache[i];
+    for (uint8_t i = 0; i < s_emoji_cache_n; i++)
+    {
+        if (s_emoji_cache[i].code == code)
+            return &s_emoji_cache[i];
     }
 
     char path[48];
@@ -163,18 +169,24 @@ static const EmojiCacheEntry* emoji_cache_lookup(uint32_t code)
     entry.code = code;
 
     FILE* f = fopen(path, "rb");
-    if (f) {
+    if (f)
+    {
         fseek(f, 0, SEEK_END);
         long sz = ftell(f);
-        if (sz > 24 && sz < 64 * 1024) {
+        if (sz > 24 && sz < 64 * 1024)
+        {
             entry.data = (uint8_t*)malloc(sz);
-            if (entry.data) {
+            if (entry.data)
+            {
                 fseek(f, 0, SEEK_SET);
-                if ((long)fread(entry.data, 1, sz, f) == sz) {
-                    entry.len  = (uint32_t)sz;
+                if ((long)fread(entry.data, 1, sz, f) == sz)
+                {
+                    entry.len = (uint32_t)sz;
                     entry.png_w = (int16_t)((entry.data[18] << 8) | entry.data[19]);
                     entry.png_h = (int16_t)((entry.data[22] << 8) | entry.data[23]);
-                } else {
+                }
+                else
+                {
                     free(entry.data);
                     entry.data = nullptr;
                 }
@@ -183,12 +195,14 @@ static const EmojiCacheEntry* emoji_cache_lookup(uint32_t code)
         fclose(f);
     }
 
-    if (s_emoji_cache_n < EMOJI_CACHE_CAP) {
+    if (s_emoji_cache_n < EMOJI_CACHE_CAP)
+    {
         s_emoji_cache[s_emoji_cache_n++] = entry;
-    } else {
+    }
+    else
+    {
         free(s_emoji_cache[0].data);
-        memmove(&s_emoji_cache[0], &s_emoji_cache[1],
-                sizeof(s_emoji_cache[0]) * (EMOJI_CACHE_CAP - 1));
+        memmove(&s_emoji_cache[0], &s_emoji_cache[1], sizeof(s_emoji_cache[0]) * (EMOJI_CACHE_CAP - 1));
         s_emoji_cache[EMOJI_CACHE_CAP - 1] = entry;
     }
     return &s_emoji_cache[s_emoji_cache_n - 1];
@@ -197,7 +211,8 @@ static const EmojiCacheEntry* emoji_cache_lookup(uint32_t code)
 static int32_t emoji_draw_callback(lgfx::LGFXBase* gfx, int32_t x, int32_t y, uint32_t code, int32_t font_height)
 {
     auto* e = emoji_cache_lookup(code);
-    if (!e->data || e->png_h <= 0) return 0;
+    if (!e->data || e->png_h <= 0)
+        return 0;
 
     float scale = (float)font_height / (float)e->png_h;
     if (!gfx->drawPng(e->data, e->len, x, y - (int32_t)((font_height * 90.0f) / 100.0f), 0, 0, 0, 0, scale, 0))
@@ -301,6 +316,9 @@ void HalCardputer::init()
 #if HAL_USE_LED
     _init_led();
 #endif
+#if HAL_USE_IOEX
+    _init_ioex();
+#endif
 #if HAL_USE_RADIO
     _init_radio();
 #endif
@@ -309,6 +327,35 @@ void HalCardputer::init()
 #endif
     _init_mesh();
 }
+
+#if HAL_USE_IOEX
+void HalCardputer::_init_ioex()
+{
+    ESP_LOGI(TAG, "init ioex");
+
+    if (!_i2c || !_i2c->is_initialized())
+    {
+        ESP_LOGW(TAG, "I2C not available, skipping IO expander");
+        return;
+    }
+
+    _ioex = new IOExpander(_i2c->get_bus_handle());
+    if (!_ioex->init())
+    {
+        ESP_LOGI(TAG, "IO expander not found (LoRa-868 module assumed)");
+        delete _ioex;
+        _ioex = nullptr;
+        return;
+    }
+
+    ESP_LOGI(TAG, "IO expander detected (Cap LoRa-1262 module)");
+
+    // Configure pin 0 as push-pull output and drive HIGH for RF front-end
+    _ioex->setDirection(0, true);
+    _ioex->setHighImpedance(0, false);
+    _ioex->digitalWrite(0, true);
+}
+#endif
 
 #if HAL_USE_RADIO
 void HalCardputer::_init_radio()
@@ -329,6 +376,13 @@ void HalCardputer::_init_radio()
     };
 
     _radio = new SX1262(pins);
+
+    // Cap LoRa-1262: IO-expander pin 0 is an RF front-end enable that
+    // must stay HIGH at all times.  It is already driven HIGH by
+    // _init_ioex().  The actual TX/RX path selection is handled by
+    // DIO2 via SetDio2AsRfSwitchCtrl (the default when no GPIO
+    // RXEN/TXEN pins are wired).
+
     if (!_radio->init())
     {
         ESP_LOGE(TAG, "Failed to initialize radio");
@@ -388,6 +442,13 @@ HalCardputer::~HalCardputer()
     {
         delete _radio;
         _radio = nullptr;
+    }
+#endif
+#if HAL_USE_IOEX
+    if (_ioex)
+    {
+        delete _ioex;
+        _ioex = nullptr;
     }
 #endif
 }

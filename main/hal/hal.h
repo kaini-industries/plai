@@ -39,6 +39,9 @@
 #if HAL_USE_LED
 #include "led/led.h"
 #endif
+#if HAL_USE_IOEX
+#include "ioex/ioex.h"
+#endif
 #if HAL_USE_RADIO
 #include "radio/radio_interface.h"
 #endif
@@ -95,6 +98,9 @@ namespace HAL
 #if HAL_USE_LED
         LED* _led;
 #endif
+#if HAL_USE_IOEX
+        IOExpander* _ioex;
+#endif
 #if HAL_USE_RADIO
         RadioInterface* _radio;
 #endif
@@ -133,6 +139,10 @@ namespace HAL
 #if HAL_USE_LED
               ,
               _led(nullptr)
+#endif
+#if HAL_USE_IOEX
+              ,
+              _ioex(nullptr)
 #endif
 #if HAL_USE_RADIO
               ,
@@ -203,6 +213,9 @@ namespace HAL
 #endif
 #if HAL_USE_LED
         inline LED* led() { return _led; }
+#endif
+#if HAL_USE_IOEX
+        inline IOExpander* ioex() { return _ioex; }
 #endif
 #if HAL_USE_RADIO
         inline RadioInterface* radio() { return _radio; }

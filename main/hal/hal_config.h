@@ -57,6 +57,12 @@
 #define HAL_USE_SDCARD 0
 #endif
 
+#ifdef CONFIG_HAL_USE_IOEX
+#define HAL_USE_IOEX 1
+#else
+#define HAL_USE_IOEX 0
+#endif
+
 #ifdef CONFIG_HAL_USE_RADIO
 #define HAL_USE_RADIO 1
 #else
