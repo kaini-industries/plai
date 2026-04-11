@@ -799,10 +799,30 @@ namespace HAL
             data[3] = 0x01;
         }
         writeCommand(SX1262_CMD_SET_PA_CONFIG, data, 4);
+#if 1
+        waitBusy();
+
+        // Explicitly set OCP to 140 mA for SX1262 (register 0x08E7).
+        // SetPaConfig is supposed to auto-configure this, but some chip
+        // revisions do not reliably update it from the POR default of 60 mA.
+        uint8_t ocp = 0x38;
+        writeRegister(0x08E7, &ocp, 1);
+#endif
     }
 
     void SX1262::setTxParams(int8_t power_dbm, uint8_t ramp_time)
     {
+#if 1
+        // DS_SX1261-2 Section 15.2 errata: PA clamping threshold is overly
+        // protective on SX1262, causing 5-6 dB output power loss under even
+        // reasonable antenna mismatch.  Bits 4:1 of TxClampConfig (0x08D8)
+        // must be set to 1111 (default 0100) after POR / cold-start.
+        uint8_t clamp = 0;
+        readRegister(0x08D8, &clamp, 1);
+        clamp |= 0x1E;
+        writeRegister(0x08D8, &clamp, 1);
+        waitBusy();
+#endif
         // Clamp power to valid range (-9 to +22 dBm for SX1262)
         if (power_dbm < -9)
             power_dbm = -9;
