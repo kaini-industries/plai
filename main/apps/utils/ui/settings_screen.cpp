@@ -10,6 +10,11 @@
 #include "common_define.h"
 #include "draw_helper.h"
 #include "key_repeat.h"
+#include <cstring>
+
+// True if a C string pointer is null or empty (replacement for std::string::empty()
+// now that SettingItem_t immutable fields are const char*).
+static inline bool cstr_empty(const char* s) { return s == nullptr || s[0] == '\0'; }
 
 static const char* TAG = "SETTINGS_SCREEN";
 static const char* HINT_ITEMS = "[\u2191][\u2193][\u2190][\u2192] [ESC] [ENTER]";
@@ -44,7 +49,7 @@ namespace UTILS
                                         const SETTINGS::SettingGroup_t& group,
                                         const SETTINGS::SettingItem_t& item)
             {
-                if (item.visible_when_key.empty())
+                if (cstr_empty(item.visible_when_key))
                     return true;
                 return hal->settings()->getString(group.nvs_namespace, item.visible_when_key) == item.visible_when_value;
             }
@@ -142,7 +147,7 @@ namespace UTILS
                     }
 
                     // Draw label
-                    hal->canvas()->drawString(item.label.c_str(), 10, y_offset + 1);
+                    hal->canvas()->drawString(item.label, 10, y_offset + 1);
 
                     // Get current value from settings
                     switch (item.type)
@@ -160,10 +165,10 @@ namespace UTILS
                         item.value = hal->settings()->getString(group.nvs_namespace, item.key);
                         break;
                     }
-                    std::string display_value = item.key == "pass" ? "******" : item.value;
+                    std::string display_value = strcmp(item.key, "pass") == 0 ? "******" : item.value;
 
                     int value_width = hal->canvas()->textWidth(display_value.c_str());
-                    int max_value_width = max_width - hal->canvas()->textWidth(item.label.c_str()) - 20;
+                    int max_value_width = max_width - hal->canvas()->textWidth(item.label) - 20;
 
                     if (value_width > max_value_width)
                     {
@@ -215,7 +220,7 @@ namespace UTILS
                 int visible_index = 0;
                 for (const auto& item : group.items)
                 {
-                    if (!item.visible_when_key.empty() &&
+                    if (!cstr_empty(item.visible_when_key) &&
                         hal->settings()->getString(group.nvs_namespace, item.visible_when_key) != item.visible_when_value)
                         continue;
                     if (visible_index == selected_item)
@@ -608,8 +613,8 @@ namespace UTILS
                 {
                     // Edit number using dialog
                     int value = std::stoi(item.value);
-                    int min_value = item.min_val.empty() ? 0 : std::stoi(item.min_val);
-                    int max_value = item.max_val.empty() ? 999 : std::stoi(item.max_val);
+                    int min_value = cstr_empty(item.min_val) ? 0 : atoi(item.min_val);
+                    int max_value = cstr_empty(item.max_val) ? 999 : atoi(item.max_val);
 
                     if (UTILS::UI::show_edit_number_dialog(hal, item.label, value, min_value, max_value))
                     {
@@ -622,7 +627,7 @@ namespace UTILS
                 case SETTINGS::TYPE_STRING:
                 {
                     // Special handling for specific settings
-                    if (!item.min_val.empty() && !hal->keyboard()->keysState().fn)
+                    if (!cstr_empty(item.min_val) && !hal->keyboard()->keysState().fn)
                     {
                         // draw list selection dialog
                         std::vector<std::string> options;
@@ -653,7 +658,8 @@ namespace UTILS
                         }
                     }
 #if HAL_USE_WIFI
-                    else if (group.nvs_namespace == "wifi" && item.key == "ssid" && !hal->keyboard()->keysState().fn)
+                    else if (group.nvs_namespace == "wifi" && strcmp(item.key, "ssid") == 0 &&
+                             !hal->keyboard()->keysState().fn)
                     {
                         // Show scanning dialog
                         UTILS::UI::show_progress(hal, "Scanning WiFi", -1, "Please wait");
@@ -688,11 +694,11 @@ namespace UTILS
                     {
                         std::string value = item.value;
                         int max_length = 50;
-                        if (!item.max_val.empty())
+                        if (!cstr_empty(item.max_val))
                         {
-                            max_length = std::stoi(item.max_val);
+                            max_length = atoi(item.max_val);
                         }
-                        bool is_password = (item.key == "pass");
+                        bool is_password = (strcmp(item.key, "pass") == 0);
                         if (UTILS::UI::show_edit_string_dialog(hal, item.label, value, is_password, max_length))
                         {
                             item.value = value;
@@ -729,17 +735,17 @@ namespace UTILS
 #endif
                         if (group.nvs_namespace == "system")
                     {
-                        if (item.key == "brightness")
+                        if (strcmp(item.key, "brightness") == 0)
                         {
                             hal->display()->setBrightness(std::stoi(item.value));
                             // handled in launcher
                         }
-                        else if (item.key == "volume")
+                        else if (strcmp(item.key, "volume") == 0)
                         {
                             // hal->speaker()->setVolume(std::stoi(item.value));
                             // handled in launcher
                         }
-                        else if (item.key == "use_led")
+                        else if (strcmp(item.key, "use_led") == 0)
                         {
                             if (item.value == "true")
                             {
@@ -782,7 +788,7 @@ namespace UTILS
 
                 if (!success)
                 {
-                    ESP_LOGE(TAG, "Failed to save setting %s.%s", group.nvs_namespace.c_str(), item.key.c_str());
+                    ESP_LOGE(TAG, "Failed to save setting %s.%s", group.nvs_namespace.c_str(), item.key);
                     UTILS::UI::show_error_dialog(hal, "Save Error", "Failed to save setting", "OK");
                 }
             }

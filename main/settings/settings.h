@@ -31,20 +31,22 @@ namespace SETTINGS
 
     struct SettingItem_t
     {
-        std::string key;
-        std::string label;
+        // Immutable fields point directly at string literals (stored in flash/.rodata),
+        // so they cost no heap. Only `value` is mutable and stays a std::string.
+        const char* key;
+        const char* label;
         SettingType type;
-        std::string default_val;
+        const char* default_val;
         std::string value;
-        std::string min_val; // For TYPE_NUMBER
-        std::string max_val; // For TYPE_NUMBER
-        std::string hint;
-        std::function<void(SettingItem_t& item)> callback;
+        const char* min_val; // For TYPE_NUMBER
+        const char* max_val; // For TYPE_NUMBER
+        const char* hint;
+        std::function<void(SettingItem_t& item)> callback = {};
         // Optional conditional visibility: item is only shown when the item identified by
         // visible_when_key (in the same group) currently equals visible_when_value.
-        // Leave visible_when_key empty to always show the item.
-        std::string visible_when_key;
-        std::string visible_when_value;
+        // Leave visible_when_key null/empty to always show the item.
+        const char* visible_when_key = nullptr;
+        const char* visible_when_value = nullptr;
     };
 
     struct SettingGroup_t

@@ -16,6 +16,7 @@
 #include <map>
 #include <ctime>
 #include <cstdlib>
+#include <cstring>
 
 static const char* TAG = "SETTINGS";
 static const std::string SETTINGS_FILE_NAME = "/sdcard/settings.txt";
@@ -799,9 +800,9 @@ namespace SETTINGS
                 case TYPE_BOOL:
                 {
                     uint8_t value;
-                    if (nvs_get_u8(nvs_handle, item.key.c_str(), &value) != ESP_OK)
+                    if (nvs_get_u8(nvs_handle, item.key, &value) != ESP_OK)
                     {
-                        value = item.default_val == "true" ? 1 : 0;
+                        value = strcmp(item.default_val, "true") == 0 ? 1 : 0;
                     }
                     cached_value.bool_val = value == 1;
                     ESP_LOGI(TAG, "Loaded bool %s = %d", cache_key.c_str(), cached_value.bool_val);
@@ -810,9 +811,9 @@ namespace SETTINGS
                 case TYPE_NUMBER:
                 {
                     int32_t value;
-                    if (nvs_get_i32(nvs_handle, item.key.c_str(), &value) != ESP_OK)
+                    if (nvs_get_i32(nvs_handle, item.key, &value) != ESP_OK)
                     {
-                        value = std::stoi(item.default_val);
+                        value = atoi(item.default_val);
                     }
                     cached_value.num_val = value;
                     ESP_LOGI(TAG, "Loaded number %s = %ld", cache_key.c_str(), cached_value.num_val);
@@ -821,10 +822,10 @@ namespace SETTINGS
                 case TYPE_STRING:
                 {
                     size_t required_size = 0;
-                    if (nvs_get_str(nvs_handle, item.key.c_str(), nullptr, &required_size) == ESP_OK)
+                    if (nvs_get_str(nvs_handle, item.key, nullptr, &required_size) == ESP_OK)
                     {
                         std::vector<char> value(required_size);
-                        if (nvs_get_str(nvs_handle, item.key.c_str(), value.data(), &required_size) == ESP_OK)
+                        if (nvs_get_str(nvs_handle, item.key, value.data(), &required_size) == ESP_OK)
                         {
                             cached_value.str_val = std::string(value.data());
                         }
@@ -856,7 +857,7 @@ namespace SETTINGS
         }
 
         const SettingItem_t* item = _findItem(ns, key);
-        return item ? (item->default_val == "true") : false;
+        return item ? (strcmp(item->default_val, "true") == 0) : false;
     }
 
     int32_t Settings::getNumber(const std::string& ns, const std::string& key)
@@ -869,7 +870,7 @@ namespace SETTINGS
         }
 
         const SettingItem_t* item = _findItem(ns, key);
-        return item ? std::stoi(item->default_val) : 0;
+        return item ? atoi(item->default_val) : 0;
     }
 
     std::string Settings::getString(const std::string& ns, const std::string& key)
@@ -995,13 +996,13 @@ namespace SETTINGS
                 switch (item.type)
                 {
                 case TYPE_BOOL:
-                    err = nvs_set_u8(nvs_handle, item.key.c_str(), it->second.bool_val ? 1 : 0);
+                    err = nvs_set_u8(nvs_handle, item.key, it->second.bool_val ? 1 : 0);
                     break;
                 case TYPE_NUMBER:
-                    err = nvs_set_i32(nvs_handle, item.key.c_str(), it->second.num_val);
+                    err = nvs_set_i32(nvs_handle, item.key, it->second.num_val);
                     break;
                 case TYPE_STRING:
-                    err = nvs_set_str(nvs_handle, item.key.c_str(), it->second.str_val.c_str());
+                    err = nvs_set_str(nvs_handle, item.key, it->second.str_val.c_str());
                     break;
                 default:
                     break;
@@ -1203,7 +1204,7 @@ namespace SETTINGS
                              value_str.c_str(),
                              cache_key.c_str(),
                              line_num);
-                    val = (item->default_val == "true");
+                    val = (strcmp(item->default_val, "true") == 0);
                 }
                 import_ok = setBool(ns, key, val);
                 break;
@@ -1282,7 +1283,7 @@ namespace SETTINGS
 
     void Settings::applyMeshConfig(SettingItem_t& item)
     {
-        ESP_LOGI(TAG, "Applying mesh config from setting: %s", item.key.c_str());
+        ESP_LOGI(TAG, "Applying mesh config from setting: %s", item.key);
         if (!_hal || !_hal->mesh())
             return;
 
