@@ -535,8 +535,12 @@ namespace HAL
             _data.time = _to_unix_time(_data.year, _data.month, _data.day, _data.hour, _data.minute, _data.second);
         }
 
-        // Notify subscriber with a consistent snapshot
-        if (_data.has_fix && _data.time > 0 && _data_callback)
+        // Notify subscriber with a consistent snapshot on every valid fix.
+        // Do NOT also require a valid timestamp here: when the module reports a
+        // position but no usable date/time (time == 0), the consumer
+        // (_onGpsData) still needs the callback and validates the time itself
+        // before adjusting the clock.
+        if (_data.has_fix && _data_callback)
         {
             GpsData snapshot;
             memcpy(&snapshot, (const void*)&_data, sizeof(GpsData));
