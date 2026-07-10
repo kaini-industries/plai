@@ -23,7 +23,10 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <dirent.h>
+#include <errno.h>
 #include <stdio.h>
+#include <sys/stat.h>
 #include <time.h>
 
 #include "apps/utils/text/text_utils.h"
@@ -35,6 +38,8 @@
 
 static const char* TAG = "APP_NODES";
 static constexpr const char* MAP_BASE_DIR = "/sdcard/map";
+static constexpr uint32_t MAP_ATTRIBUTION_DISPLAY_MS = 5000;
+static constexpr size_t MAP_ATTRIBUTION_MAX_BYTES = 512;
 
 struct MapStyleColors
 {
@@ -56,14 +61,198 @@ static constexpr MapStyleColors MAP_STYLES[] = {
 };
 static constexpr size_t MAP_STYLES_COUNT = sizeof(MAP_STYLES) / sizeof(MAP_STYLES[0]);
 
-static const MapStyleColors& _map_get_style(const char* style_name)
+static int _map_get_style_index(const char* style_name)
 {
     for (size_t i = 0; i < MAP_STYLES_COUNT; i++)
     {
         if (strcmp(MAP_STYLES[i].name, style_name) == 0)
-            return MAP_STYLES[i];
+            return (int)i;
     }
-    return MAP_STYLES[1];
+    return 0;
+}
+
+static bool _map_is_decimal_name(const char* name)
+{
+    if (!name || !name[0])
+        return false;
+
+    for (const char* p = name; *p; p++)
+    {
+        if (*p < '0' || *p > '9')
+            return false;
+    }
+    return true;
+}
+
+static bool _map_is_tile_filename(const char* name)
+{
+    if (!name)
+        return false;
+
+    const size_t len = strlen(name);
+    if (len <= 4 || strcmp(name + len - 4, ".jpg") != 0)
+        return false;
+
+    for (size_t i = 0; i < len - 4; i++)
+    {
+        if (name[i] < '0' || name[i] > '9')
+            return false;
+    }
+    return true;
+}
+
+static bool _map_is_directory(const char* path)
+{
+    struct stat st;
+    return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+static void _map_trim_incomplete_utf8(std::string& text)
+{
+    if (text.empty())
+        return;
+
+    size_t start = text.size() - 1;
+    while (start > 0 && ((uint8_t)text[start] & 0xC0) == 0x80)
+        start--;
+
+    const uint8_t lead = (uint8_t)text[start];
+    size_t expected = 1;
+    if ((lead & 0xE0) == 0xC0)
+        expected = 2;
+    else if ((lead & 0xF0) == 0xE0)
+        expected = 3;
+    else if ((lead & 0xF8) == 0xF0)
+        expected = 4;
+
+    if (expected > text.size() - start)
+        text.resize(start);
+}
+
+// New tile packs publish an atomic tileset.json manifest. A missing manifest is
+// accepted for backwards compatibility; if one is present, an interrupted pack
+// ("complete": false) must not be offered as an installed style.
+static bool _map_manifest_is_complete(const char* style_path)
+{
+    char manifest_path[128];
+    int path_len = snprintf(manifest_path, sizeof(manifest_path), "%s/tileset.json", style_path);
+    if (path_len < 0 || path_len >= (int)sizeof(manifest_path))
+        return false;
+
+    struct stat st;
+    if (stat(manifest_path, &st) != 0)
+        return errno == ENOENT;
+
+    FILE* file = fopen(manifest_path, "rb");
+    if (!file)
+        return false;
+
+    char manifest[1025];
+    size_t bytes_read = fread(manifest, 1, sizeof(manifest) - 1, file);
+    fclose(file);
+    manifest[bytes_read] = '\0';
+
+    const char* complete = strstr(manifest, "\"complete\"");
+    if (!complete)
+        return false;
+    complete = strchr(complete, ':');
+    if (!complete)
+        return false;
+    complete++;
+    while (*complete == ' ' || *complete == '\t' || *complete == '\r' || *complete == '\n')
+        complete++;
+    return strncmp(complete, "true", 4) == 0;
+}
+
+// Validate the existing firmware contract without requiring a manifest:
+// /sdcard/map/<style>/<zoom>/<x>/<y>.jpg. This keeps legacy tile packs usable
+// while preventing an empty style directory from appearing in the TAB cycle.
+static bool _map_style_has_tiles(const char* style_name)
+{
+    char style_path[96];
+    int path_len = snprintf(style_path, sizeof(style_path), "%s/%s", MAP_BASE_DIR, style_name);
+    if (path_len < 0 || path_len >= (int)sizeof(style_path))
+        return false;
+    if (!_map_manifest_is_complete(style_path))
+        return false;
+
+    DIR* zoom_dir = opendir(style_path);
+    if (!zoom_dir)
+        return false;
+
+    struct dirent* zoom_entry;
+    while ((zoom_entry = readdir(zoom_dir)) != nullptr)
+    {
+        if (!_map_is_decimal_name(zoom_entry->d_name))
+            continue;
+
+        char zoom_path[128];
+        path_len = snprintf(zoom_path, sizeof(zoom_path), "%s/%s", style_path, zoom_entry->d_name);
+        if (path_len < 0 || path_len >= (int)sizeof(zoom_path) || !_map_is_directory(zoom_path))
+            continue;
+
+        DIR* x_dir = opendir(zoom_path);
+        if (!x_dir)
+            continue;
+
+        struct dirent* x_entry;
+        while ((x_entry = readdir(x_dir)) != nullptr)
+        {
+            if (!_map_is_decimal_name(x_entry->d_name))
+                continue;
+
+            char x_path[160];
+            path_len = snprintf(x_path, sizeof(x_path), "%s/%s", zoom_path, x_entry->d_name);
+            if (path_len < 0 || path_len >= (int)sizeof(x_path) || !_map_is_directory(x_path))
+                continue;
+
+            DIR* y_dir = opendir(x_path);
+            if (!y_dir)
+                continue;
+
+            struct dirent* y_entry;
+            while ((y_entry = readdir(y_dir)) != nullptr)
+            {
+                if (!_map_is_tile_filename(y_entry->d_name))
+                    continue;
+
+                char tile_path[192];
+                path_len = snprintf(tile_path, sizeof(tile_path), "%s/%s", x_path, y_entry->d_name);
+                if (path_len < 0 || path_len >= (int)sizeof(tile_path))
+                    continue;
+
+                struct stat st;
+                if (stat(tile_path, &st) == 0 && !S_ISDIR(st.st_mode) && st.st_size >= 3)
+                {
+                    FILE* tile = fopen(tile_path, "rb");
+                    uint8_t signature[3] = {};
+                    size_t signature_size = tile ? fread(signature, 1, sizeof(signature), tile) : 0;
+                    if (tile)
+                        fclose(tile);
+                    if (signature_size == sizeof(signature) && signature[0] == 0xFF && signature[1] == 0xD8 &&
+                        signature[2] == 0xFF)
+                    {
+                        closedir(y_dir);
+                        closedir(x_dir);
+                        closedir(zoom_dir);
+                        return true;
+                    }
+                }
+            }
+            closedir(y_dir);
+        }
+        closedir(x_dir);
+    }
+    closedir(zoom_dir);
+    return false;
+}
+
+static const char* _map_default_attribution(int style_idx)
+{
+    (void)style_idx;
+    // A style name does not identify its data provider. New packs always carry
+    // ATTRIBUTION.txt, so never guess when a legacy/custom pack omits it.
+    return "Map attribution unavailable (ATTRIBUTION.txt missing)";
 }
 
 static const char* HINT_LIST = "[Fn][\u2191][\u2193][\u2190][\u2192][1..8.F.I.T.R.N.P.Q][DEL][ESC]";
@@ -81,7 +270,7 @@ static const char* HINT_NBR_LIST = "[Fn] [\u2191][\u2193][\u2190][\u2192] [ESC] 
 static const char* HINT_NBR_LIST_FN = "[\u2191]HOME [\u2193]END";
 static const char* HINT_QM_LIST = "[Fn] [\u2191][\u2193][\u2190][\u2192] [A]DD [DEL] [ENTER] [ESC]";
 static const char* HINT_QM_LIST_FN = "[\u2191]HOME [\u2193]END";
-static const char* HINT_MAP = "[Fn] [\u2190][\u2192][\u2191][\u2193] [C] [TAB] [ENTER] [ESC]";
+static const char* HINT_MAP = "[Fn] [\u2190][\u2192][\u2191][\u2193] [C] [TAB] [ENTER]CREDITS [ESC]";
 static const char* HINT_MAP_FN = "[\u2191][\u2193]ZOOM [C]OUR NODE";
 
 static bool last_fn = false;
@@ -228,6 +417,13 @@ void AppNodes::onCreate()
     _data.map_center_lat = 0;
     _data.map_center_lon = 0;
     _data.map_zoom = MAP_DEFAULT_ZOOM;
+    _data.map_tile_dir[0] = '\0';
+    _data.map_style_idx = 0;
+    _data.map_installed_styles = 0;
+    _data.map_has_tiles = false;
+    _data.map_attribution_from_file = false;
+    _data.map_attribution_until_ms = 0;
+    _data.map_attribution.clear();
 
     // Initialize scrolling text context for node names (FONT_12)
     scroll_text_init_ex(&_data.name_scroll_ctx,
@@ -335,6 +531,12 @@ void AppNodes::onRunning()
         break;
 
     case ViewState::NODE_MAP:
+        if (_data.map_attribution_until_ms != 0 &&
+            (int32_t)(millis() - _data.map_attribution_until_ms) >= 0)
+        {
+            _data.map_attribution_until_ms = 0;
+            _data.update_list = true;
+        }
         updated |= _render_node_map();
         updated |= _render_node_map_hint();
         if (updated)
@@ -2224,14 +2426,7 @@ void AppNodes::_handle_node_list_input()
                 _data.map_center_lon = 0;
                 _data.map_zoom = MAP_DEFAULT_ZOOM;
 
-                {
-                    std::string style = _data.hal->settings()->getString("system", "map_style");
-                    if (style.empty())
-                        style = "dark";
-                    snprintf(_data.map_tile_dir, sizeof(_data.map_tile_dir), "%s/%s", MAP_BASE_DIR, style.c_str());
-                    const auto& sc = _map_get_style(style.c_str());
-                    _data.map_style_idx = (int)(&sc - MAP_STYLES);
-                }
+                _map_prepare_style();
 
                 if (_data.selected_node.info.has_position)
                 {
@@ -2339,14 +2534,7 @@ void AppNodes::_handle_node_detail_input()
             _data.map_center_lon = 0;
             _data.map_zoom = MAP_DEFAULT_ZOOM;
 
-            {
-                std::string style = _data.hal->settings()->getString("system", "map_style");
-                if (style.empty())
-                    style = "dark";
-                snprintf(_data.map_tile_dir, sizeof(_data.map_tile_dir), "%s/%s", MAP_BASE_DIR, style.c_str());
-                const auto& sc = _map_get_style(style.c_str());
-                _data.map_style_idx = (int)(&sc - MAP_STYLES);
-            }
+            _map_prepare_style();
 
             if (_data.selected_node_valid && _data.selected_node.info.has_position)
             {
@@ -4250,6 +4438,134 @@ void AppNodes::_handle_quick_messages_input()
 
 // ===== OSM raster tile map renderer =====
 
+void AppNodes::_map_scan_installed_styles()
+{
+    uint8_t installed = 0;
+    for (size_t i = 0; i < MAP_STYLES_COUNT; i++)
+    {
+        if (_map_style_has_tiles(MAP_STYLES[i].name))
+            installed |= (uint8_t)(1U << i);
+    }
+    _data.map_installed_styles = installed;
+}
+
+void AppNodes::_map_load_attribution()
+{
+    _data.map_attribution = _map_default_attribution(_data.map_style_idx);
+    _data.map_attribution_from_file = false;
+
+    char path[128];
+    int path_len = snprintf(path, sizeof(path), "%s/ATTRIBUTION.txt", _data.map_tile_dir);
+    if (path_len < 0 || path_len >= (int)sizeof(path))
+        return;
+
+    FILE* file = fopen(path, "rb");
+    if (!file)
+    {
+        ESP_LOGW(TAG, "No attribution file for map style '%s'; using built-in credit", MAP_STYLES[_data.map_style_idx].name);
+        return;
+    }
+
+    char buffer[MAP_ATTRIBUTION_MAX_BYTES + 1];
+    size_t bytes_read = fread(buffer, 1, MAP_ATTRIBUTION_MAX_BYTES, file);
+    fclose(file);
+    buffer[bytes_read] = '\0';
+
+    std::string cleaned;
+    cleaned.reserve(bytes_read);
+    size_t offset = bytes_read >= 3 && (uint8_t)buffer[0] == 0xEF && (uint8_t)buffer[1] == 0xBB &&
+                            (uint8_t)buffer[2] == 0xBF
+                        ? 3
+                        : 0;
+    for (size_t i = offset; i < bytes_read; i++)
+    {
+        unsigned char ch = (unsigned char)buffer[i];
+        if (ch == '\r' || ch == '\0')
+            continue;
+        if (ch == '\t')
+            ch = ' ';
+        if (ch < 0x20 && ch != '\n')
+            continue;
+        cleaned.push_back((char)ch);
+    }
+    _map_trim_incomplete_utf8(cleaned);
+
+    size_t first = cleaned.find_first_not_of(" \n");
+    size_t last = cleaned.find_last_not_of(" \n");
+    if (first == std::string::npos || last == std::string::npos)
+        return;
+
+    _data.map_attribution = cleaned.substr(first, last - first + 1);
+    _data.map_attribution_from_file = true;
+}
+
+void AppNodes::_map_select_style(int style_idx)
+{
+    if (style_idx < 0 || style_idx >= (int)MAP_STYLES_COUNT)
+        style_idx = 0;
+
+    _data.map_style_idx = style_idx;
+    snprintf(_data.map_tile_dir,
+             sizeof(_data.map_tile_dir),
+             "%s/%s",
+             MAP_BASE_DIR,
+             MAP_STYLES[_data.map_style_idx].name);
+    _data.map_has_tiles = (_data.map_installed_styles & (1U << _data.map_style_idx)) != 0;
+    _map_load_attribution();
+    _data.map_attribution_until_ms = _data.map_has_tiles ? millis() + MAP_ATTRIBUTION_DISPLAY_MS : 0;
+}
+
+void AppNodes::_map_prepare_style()
+{
+    _map_scan_installed_styles();
+
+    std::string preferred = _data.hal->settings()->getString("system", "map_style");
+    if (preferred.empty())
+        preferred = "osm";
+
+    int requested_idx = _map_get_style_index(preferred.c_str());
+    int selected_idx = requested_idx;
+    if (_data.map_installed_styles != 0 &&
+        (_data.map_installed_styles & (1U << requested_idx)) == 0)
+    {
+        for (size_t i = 0; i < MAP_STYLES_COUNT; i++)
+        {
+            if ((_data.map_installed_styles & (1U << i)) != 0)
+            {
+                selected_idx = (int)i;
+                break;
+            }
+        }
+        ESP_LOGW(TAG,
+                 "Requested map style '%s' is unavailable; using '%s'",
+                 preferred.c_str(),
+                 MAP_STYLES[selected_idx].name);
+    }
+
+    _map_select_style(selected_idx);
+}
+
+void AppNodes::_map_cycle_style()
+{
+    _map_scan_installed_styles();
+    if (_data.map_installed_styles == 0)
+    {
+        _data.map_has_tiles = false;
+        _data.map_attribution_until_ms = 0;
+        return;
+    }
+
+    for (size_t step = 1; step <= MAP_STYLES_COUNT; step++)
+    {
+        int next_idx = (_data.map_style_idx + (int)step) % (int)MAP_STYLES_COUNT;
+        if ((_data.map_installed_styles & (1U << next_idx)) != 0)
+        {
+            _map_select_style(next_idx);
+            return;
+        }
+    }
+}
+
 void AppNodes::_map_latlon_to_pixel(double lat, double lon, int zoom, double& px, double& py)
 {
     double n = (double)(1 << zoom);
@@ -4337,14 +4653,20 @@ bool AppNodes::_render_node_map()
     int ty_min = (int)floor(vp_top / MAP_TILE_PX);
     int ty_max = (int)floor((vp_top + map_h - 1) / MAP_TILE_PX);
 
-    // Draw tile grid
-    for (int ty = ty_min; ty <= ty_max; ty++)
+    // Draw tile grid. A style can be installed but not cover the current
+    // location/zoom, so track successful decodes separately from installation.
+    int drawn_tiles = 0;
+    if (_data.map_has_tiles)
     {
-        for (int tx = tx_min; tx <= tx_max; tx++)
+        for (int ty = ty_min; ty <= ty_max; ty++)
         {
-            int scr_x = (int)(tx * MAP_TILE_PX - vp_left);
-            int scr_y = map_y + (int)(ty * MAP_TILE_PX - vp_top);
-            _map_draw_tile(tx, ty, z, scr_x, scr_y, map_w, map_h, map_y);
+            for (int tx = tx_min; tx <= tx_max; tx++)
+            {
+                int scr_x = (int)(tx * MAP_TILE_PX - vp_left);
+                int scr_y = map_y + (int)(ty * MAP_TILE_PX - vp_top);
+                if (_map_draw_tile(tx, ty, z, scr_x, scr_y, map_w, map_h, map_y))
+                    drawn_tiles++;
+            }
         }
     }
     // clear bottom for hint
@@ -4420,6 +4742,32 @@ bool AppNodes::_render_node_map()
         }
     }
 
+    // Give a clear status instead of silently showing an empty background.
+    if (!_data.map_has_tiles || drawn_tiles == 0)
+    {
+        const int panel_w = map_w - 16;
+        const int panel_h = _data.map_has_tiles ? 34 : 48;
+        const int panel_x = 8;
+        const int panel_y = map_y + (map_h - panel_h) / 2;
+        canvas->fillRoundRect(panel_x, panel_y, panel_w, panel_h, 4, TFT_BLACK);
+        canvas->drawRoundRect(panel_x, panel_y, panel_w, panel_h, 4, TFT_WHITE);
+        canvas->setTextColor(TFT_WHITE);
+        canvas->setFont(FONT_12);
+        canvas->drawCenterString(_data.map_has_tiles ? "No tile at this location" : "Offline map unavailable",
+                                 map_w / 2,
+                                 panel_y + 4);
+        canvas->setFont(FONT_8);
+        if (_data.map_has_tiles)
+        {
+            canvas->drawCenterString("Pan, change zoom, or press TAB", map_w / 2, panel_y + 20);
+        }
+        else
+        {
+            canvas->drawCenterString("No complete JPEG tile set found", map_w / 2, panel_y + 20);
+            canvas->drawCenterString("/sdcard/map/<style>/<z>/<x>/<y>.jpg", map_w / 2, panel_y + 32);
+        }
+    }
+
     // --- Info overlay ---
     canvas->setFont(FONT_8);
     canvas->setTextColor(mstyle.overlay_text);
@@ -4427,6 +4775,7 @@ bool AppNodes::_render_node_map()
     // map style
     snprintf(z_buf, sizeof(z_buf), "Style:%s", MAP_STYLES[_data.map_style_idx].name);
     canvas->drawString(z_buf, 2, map_y);
+    const int style_label_w = canvas->textWidth(z_buf);
     // zoom
     snprintf(z_buf, sizeof(z_buf), "Zoom:%d", z);
     canvas->drawString(z_buf, 2, map_y + map_h - 10);
@@ -4435,6 +4784,124 @@ bool AppNodes::_render_node_map()
     snprintf(pos_buf, sizeof(pos_buf), "%.4f, %.4f", _data.map_center_lat, _data.map_center_lon);
     int pw = strlen(pos_buf) * 6;
     canvas->drawString(pos_buf, map_w - pw - 2, map_y + map_h - 10);
+
+    // Keep a compact credit visible at all times. The full source attribution
+    // appears for five seconds on entry/style change and can be replayed with
+    // ENTER, as advertised in the hint bar.
+    if (_data.map_has_tiles)
+    {
+        std::string compact_credit;
+        if (_data.map_attribution.find("OpenStreetMap") != std::string::npos)
+        {
+            compact_credit = "\u00a9 OpenStreetMap";
+        }
+        else if (_data.map_attribution_from_file)
+        {
+            size_t line_end = _data.map_attribution.find('\n');
+            compact_credit = _data.map_attribution.substr(0, line_end);
+        }
+        else
+        {
+            compact_credit = "Map credits unavailable";
+        }
+
+        const int max_credit_w = std::max(24, map_w - style_label_w - 12);
+        if (canvas->textWidth(compact_credit.c_str()) > max_credit_w)
+        {
+            const char* ellipsis = "...";
+            const int available_text_w = std::max(0, max_credit_w - (int)canvas->textWidth(ellipsis));
+            std::vector<size_t> boundaries = {0};
+            for (size_t i = 1; i < compact_credit.size(); i++)
+            {
+                if (((uint8_t)compact_credit[i] & 0xC0) != 0x80)
+                    boundaries.push_back(i);
+            }
+            boundaries.push_back(compact_credit.size());
+
+            size_t low = 0;
+            size_t high = boundaries.size() - 1;
+            size_t best = 0;
+            while (low <= high)
+            {
+                size_t mid = low + (high - low) / 2;
+                size_t prefix_size = boundaries[mid];
+                char saved = '\0';
+                if (prefix_size < compact_credit.size())
+                {
+                    saved = compact_credit[prefix_size];
+                    compact_credit[prefix_size] = '\0';
+                }
+                int prefix_width = canvas->textWidth(compact_credit.c_str());
+                if (prefix_size < compact_credit.size())
+                    compact_credit[prefix_size] = saved;
+
+                if (prefix_width <= available_text_w)
+                {
+                    best = prefix_size;
+                    low = mid + 1;
+                }
+                else
+                {
+                    if (mid == 0)
+                        break;
+                    high = mid - 1;
+                }
+            }
+            compact_credit.resize(best);
+            compact_credit += ellipsis;
+        }
+
+        int credit_w = canvas->textWidth(compact_credit.c_str());
+        int credit_x = map_w - credit_w - 4;
+        canvas->fillRect(credit_x - 2, map_y, credit_w + 4, 9, TFT_BLACK);
+        canvas->setTextColor(TFT_WHITE);
+        canvas->drawString(compact_credit.c_str(), credit_x, map_y);
+    }
+
+    bool show_attribution = _data.map_has_tiles && _data.map_attribution_until_ms != 0 &&
+                            (int32_t)(_data.map_attribution_until_ms - millis()) > 0;
+    if (show_attribution)
+    {
+        auto lines = wrap_text_px(_data.map_attribution, map_w - 16, canvas);
+        const size_t max_lines = 7;
+        size_t visible_lines = std::min(lines.size(), max_lines);
+        const int panel_h = 25 + (int)visible_lines * 9;
+        const int panel_x = 3;
+        const int panel_y = map_y + (map_h - panel_h) / 2;
+        const int panel_w = map_w - 6;
+
+        canvas->fillRoundRect(panel_x, panel_y, panel_w, panel_h, 4, TFT_BLACK);
+        canvas->drawRoundRect(panel_x, panel_y, panel_w, panel_h, 4, TFT_WHITE);
+        canvas->setTextColor(TFT_WHITE);
+
+        char title[32];
+        snprintf(title, sizeof(title), "Map credits - %s", MAP_STYLES[_data.map_style_idx].name);
+        canvas->drawString(title, panel_x + 5, panel_y + 3);
+
+        int text_y = panel_y + 13;
+        for (size_t i = 0; i < visible_lines; i++)
+        {
+            if (i == visible_lines - 1 && lines.size() > visible_lines)
+                canvas->drawString("...", panel_x + 5, text_y);
+            else
+                canvas->drawString(lines[i].c_str(), panel_x + 5, text_y);
+            text_y += 9;
+        }
+
+        char detail_location[64];
+        if (_data.map_attribution_from_file)
+        {
+            snprintf(detail_location,
+                     sizeof(detail_location),
+                     "See /map/%s/ATTRIBUTION.txt",
+                     MAP_STYLES[_data.map_style_idx].name);
+        }
+        else
+        {
+            snprintf(detail_location, sizeof(detail_location), "ATTRIBUTION.txt missing");
+        }
+        canvas->drawString(detail_location, panel_x + 5, panel_y + panel_h - 10);
+    }
 
     canvas->setFont(FONT_12);
     return true;
@@ -4484,16 +4951,15 @@ void AppNodes::_handle_node_map_input()
         {
             _data.hal->playNextSound();
             _data.hal->keyboard()->waitForRelease(KEY_NUM_TAB);
-            _data.map_style_idx = (_data.map_style_idx + 1) % MAP_STYLES_COUNT;
-            const auto& s = MAP_STYLES[_data.map_style_idx];
-            snprintf(_data.map_tile_dir, sizeof(_data.map_tile_dir), "%s/%s", MAP_BASE_DIR, s.name);
-            // _data.hal->settings()->setString("system", "map_style", s.name);
+            _map_cycle_style();
             _data.update_list = true;
         }
         else if (_data.hal->keyboard()->isKeyPressing(KEY_NUM_ENTER))
         {
             _data.hal->playNextSound();
             _data.hal->keyboard()->waitForRelease(KEY_NUM_ENTER);
+            if (_data.map_has_tiles)
+                _data.map_attribution_until_ms = millis() + MAP_ATTRIBUTION_DISPLAY_MS;
             _data.update_list = true;
         }
         else if (_data.hal->keyboard()->isKeyPressing(KEY_NUM_ESC))

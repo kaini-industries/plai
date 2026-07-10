@@ -6,3 +6,23 @@ docs
 archive
 main/meshtastic/*
 tools
+
+# Python tooling
+__pycache__/
+*.py[cod]
+.venv/
+
+# Generated offline map artifacts
+map/.cache/
+map/.tile-cache/
+map/cache/
+map/output/
+map/tiles/
+map/*.mbtiles
+map/*.pmtiles
+map/**/*.part
+# The default output is map/<style>/{z}/{x}/{y}.jpg.
+map/*/[0-9]*/
+map/*/tileset.json
+map/*/ATTRIBUTION.txt
+map/*/.plai-packager.lock

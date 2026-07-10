@@ -120,6 +120,11 @@ namespace MOONCAKE::APPS
             int map_zoom;
             char map_tile_dir[64];
             int map_style_idx;
+            uint8_t map_installed_styles;
+            bool map_has_tiles;
+            bool map_attribution_from_file;
+            uint32_t map_attribution_until_ms;
+            std::string map_attribution;
 
             // Sorting
             Mesh::SortOrder sort_order;
@@ -182,6 +187,11 @@ namespace MOONCAKE::APPS
         static void _map_latlon_to_pixel(double lat, double lon, int zoom, double& px, double& py);
         static void _map_pixel_to_latlon(double px, double py, int zoom, double& lat, double& lon);
         bool _map_draw_tile(int tx, int ty, int zoom, int screen_x, int screen_y, int map_w, int map_h, int map_y);
+        void _map_scan_installed_styles();
+        void _map_select_style(int style_idx);
+        void _map_prepare_style();
+        void _map_cycle_style();
+        void _map_load_attribution();
 
         // Helpers
         bool _selected_node_valid();

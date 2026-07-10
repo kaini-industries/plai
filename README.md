@@ -62,7 +62,7 @@ Full node management with up to 1000 nodes persisted on SD card.
 - Exchange node info _hotkey_ [N] — send node info request to selected node
 - Exchange position _hotkey_ [P] — send position request to selected node
 - Traceroute _hotkey_ [T] to open recent traceroute logs. [Fn] + [T] to start traceroute immediately
-- Map view _hotkey_ [M] — offline OSM map centered on the selected node with all node positions
+- Map view _hotkey_ [M] — offline raster map centered on the selected node with all node positions
 - Quick messages _hotkey_ [Q] — open quick message templates editor
 
 #### Direct Messages
@@ -214,16 +214,16 @@ Direct! 🎯
   <img src="pics/nodes_map_z11.png" width="480" alt="Node Map Zoom 11">
 </p>
 
-Offline map powered by OpenStreetMap raster tiles stored on SD card. Node positions are rendered in real-time from the in-memory index — zero SD I/O for markers.
+Offline map powered by user-supplied raster tiles stored on SD card. Node positions are rendered in real-time from the in-memory index — zero SD I/O for markers.
 
 - **Open from node list** — [M] opens the map centered on the selected node
 - **Open from detail view** — [M] opens the map centered on the selected node
 - **Pan** — Arrow keys [←][→][↑][↓] move the viewport by 25%
-- **Zoom** — [Fn]+[↑] zoom in, [Fn]+[↓] zoom out (zoom 2–15)
+- **Zoom** — [Fn]+[↑] zoom in, [Fn]+[↓] zoom out (zoom 1–15)
 - **Center on selected node** — [C] re-centers on the selected node
 - **Center on our node** — [Fn]+[C] re-centers on our node's GPS position
-- **Switch map style** — [TAB] cycles through map styles: osm → dark → voyager → topo
-- **Refresh** — [ENTER] re-renders the map (picks up new node positions received via mesh)
+- **Switch map style** — [TAB] cycles through installed map style directories
+- **Map credits / refresh** — [ENTER] replays the full tile-pack attribution and re-renders the map
 - **Back** — [ESC] returns to previous view
 
 Node markers are color-coded: selected node in orange with crosshair. Labels show the node short name (or hex ID fallback) at zoom ≥ 8 or for the selected node.
@@ -232,64 +232,48 @@ The map displays zoom level and center coordinates in the bottom corners.
 
 ##### Downloading Map Tiles
 
-Use the `map/download_osm_tiles.py` script to download tiles for offline use. Requires Python 3 and [Pillow](https://pypi.org/project/Pillow/) (`pip install Pillow`).
+Use `map/download_osm_tiles.py` to package tiles from a source that permits offline use. It supports Protomaps, an authorized local XYZ endpoint, and existing raster MBTiles archives. Public OpenStreetMap, CARTO, and OpenTopoMap endpoints must not be used for bulk offline packs; the script rejects those hosts. The old Google Drive archive is no longer linked because its provenance and redistribution rights were not documented.
 
-Tiles are downloaded as JPEG (quality 75) in the standard `{zoom}/{x}/{y}.jpg` slippy map format. Low zoom levels (global overview) are downloaded worldwide; higher zooms are limited to a radius around the center point.
+The firmware recognizes `osm`, `dark`, `voyager`, and `topo` style directories. Protomaps supplies the `osm` light theme and `dark`; use an appropriately licensed local or MBTiles source for `voyager` or `topo`.
 
-**Available styles:**
-
-| Style     | Description                                            | Best for                         |
-| --------- | ------------------------------------------------------ | -------------------------------- |
-| `dark`    | CartoDB Dark Matter — dark background, bright features | **Small TFT displays** (default) |
-| `osm`     | Standard OpenStreetMap — light, detailed               | General use                      |
-| `voyager` | CartoDB Voyager — clean, modern look                   | Light theme                      |
-| `topo`    | OpenTopoMap — topographic with elevation contours      | Outdoor / hiking                 |
-
-**Examples:**
+Install the Python dependency first:
 
 ```bash
-# New York City, dark theme (recommended), 50km radius, zoom 2-12
-python map/download_osm_tiles.py --lat 40.7128 --lon -74.006 --radius 50 --style dark
-
-# London, standard OSM with contrast boost for small screen
-python map/download_osm_tiles.py --lat 51.5074 --lon -0.1278 --radius 40 --style osm --contrast 1.3
-
-# Tokyo, voyager style, extended zoom for city detail
-python map/download_osm_tiles.py --lat 35.6762 --lon 139.6503 --radius 60 --max-zoom 14
-
-# Kyiv, dark theme with extra brightness
-python map/download_osm_tiles.py --lat 50.4501 --lon 30.5234 --radius 80 --style dark --brightness 1.2
-
-# Berlin, topographic map for hiking
-python map/download_osm_tiles.py --lat 52.52 --lon 13.405 --radius 30 --style topo
-
-# Sydney, wide coverage with lower max zoom to save space
-python map/download_osm_tiles.py --lat -33.8688 --lon 151.2093 --radius 100 --max-zoom 10
-
-# Paris, dark theme, global tiles up to zoom 7, regional up to zoom 13
-python map/download_osm_tiles.py --lat 48.8566 --lon 2.3522 --radius 50 --global-zoom 7 --max-zoom 13 --style dark
+python3 -m pip install -r map/requirements.txt
 ```
 
-**Options:**
+For the default Protomaps workflow, also install the [`pmtiles` CLI](https://docs.protomaps.com/pmtiles/cli) and Docker. Use full TileServer GL, not TileServer GL Light, because server-side raster rendering is required.
 
-| Flag             | Default       | Description                                 |
-| ---------------- | ------------- | ------------------------------------------- |
-| `--lat`, `--lon` | (required)    | Center coordinates                          |
-| `--radius`       | 50            | Coverage radius in km for regional tiles    |
-| `--min-zoom`     | 2             | Minimum zoom level                          |
-| `--max-zoom`     | 12            | Maximum zoom level                          |
-| `--global-zoom`  | 5             | Download ALL tiles globally up to this zoom |
-| `--style`        | dark          | Map style: `dark`, `osm`, `voyager`, `topo` |
-| `--contrast`     | 1.0           | Contrast multiplier (e.g. 1.3 = +30%)       |
-| `--brightness`   | 1.0           | Brightness multiplier                       |
-| `--saturation`   | 1.0           | Color saturation multiplier                 |
-| `--output`       | `map/<style>` | Output directory                            |
+Always inspect the plan before a large build:
 
-After downloading, copy the style folder (e.g. `map/dark/`) to `/sdcard/map/` on the device SD card, so tiles end up at `/sdcard/map/dark/{z}/{x}/{y}.jpg`. You can have multiple styles on the card and switch between them in **Settings → System → Map style**.
+```bash
+python3 map/download_osm_tiles.py \
+  --source protomaps \
+  --lat 40.7128 --lon -74.0060 --radius 50 \
+  --style dark --dry-run
+```
 
-**Prebuilt tiles in zoom 1-8 are available to download: [Google Drive](https://drive.google.com/drive/folders/1w3my-z-5raQ3HxWVPcNoBzR7aFre3rxt?usp=drive_link)**
+Then run without `--dry-run` to build the tiles. Two alternative sources are:
 
-Download, unzip then can customize with your location with bigger zoom (12-15) using the script.
+```bash
+# Authorized local XYZ raster service
+python3 map/download_osm_tiles.py \
+  --source local \
+  --tile-url 'http://127.0.0.1:8080/styles/basic/256/{z}/{x}/{y}.png' \
+  --attribution '© Authorized Example Map contributors' \
+  --lat 51.5074 --lon -0.1278 --radius 40 \
+  --style voyager
+
+# Existing raster MBTiles archive
+python3 map/download_osm_tiles.py \
+  --source mbtiles --mbtiles /path/to/authorized-map.mbtiles \
+  --lat 35.6762 --lon 139.6503 --radius 60 \
+  --style topo
+```
+
+Low zoom levels through `--global-zoom` cover the world; higher zooms cover the requested radius. `--max-tiles` provides a safety ceiling. Successful output includes `{z}/{x}/{y}.jpg`, `tileset.json`, and `ATTRIBUTION.txt` under `map/<style>/` by default. Existing tiles are resumed only when that manifest has a matching source fingerprint; `--force` deliberately clears numeric zoom trees before a provenance-changing rebuild.
+
+Copy the complete style directory to `/sdcard/map/`, producing `/sdcard/map/<style>/<z>/<x>/<y>.jpg`. Keep its attribution and provenance files with the pack. See the [complete map packager guide](map/README.md) for pinned Protomaps builds, credentials, caches, retries, resuming, and licensing.
 
 ### Channels
 
@@ -571,7 +555,10 @@ Plai/
 │   ├── settings/              # NVS settings with cache
 │   └── main.cpp               # Entry point
 ├── map/
-│   └── download_osm_tiles.py  # OSM tile downloader for offline map
+│   ├── download_osm_tiles.py  # Offline map tile packager CLI
+│   ├── tile_downloader.py      # Planning, sources, validation, and packaging
+│   ├── tileserver/             # Vendored local Protomaps render styles
+│   └── tests/                  # Offline map packager tests
 ├── protobufs/                 # Meshtastic .proto definitions (git submodule)
 ├── components/
 │   ├── LovyanGFX/             # Display graphics library
