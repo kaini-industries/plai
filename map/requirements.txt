@@ -1,0 +1,2 @@
+# Runtime dependency for validating, transforming, and writing firmware JPEG tiles.
+Pillow>=10.0
