@@ -47,6 +47,7 @@ class ProtomapsBackendTests(unittest.TestCase):
                 max_zoom=4,
                 style="dark",
                 cache_dir=Path(temporary),
+                pmtiles_extractor="cli",
                 build_url="https://build.protomaps.com/20260518.pmtiles",
                 run=fake_run,
                 fetch=fake_fetch,
@@ -121,6 +122,7 @@ class ProtomapsBackendTests(unittest.TestCase):
                 max_zoom=1,
                 style="dark",
                 cache_dir=Path(temporary),
+                pmtiles_extractor="cli",
                 build_url="https://build.protomaps.com/20260518.pmtiles",
                 run=fake_run,
                 fetch=lambda *_args, **_kwargs: b"{}",
@@ -131,6 +133,142 @@ class ProtomapsBackendTests(unittest.TestCase):
                 session.prepare()
 
         self.assertTrue(any(command[1:3] == ["rm", "--force"] for command in commands))
+
+    def test_python_extractor_handles_all_pieces_without_pmtiles_cli(self) -> None:
+        commands: list[list[str]] = []
+        which_calls: list[str] = []
+
+        class FakePythonExtractor:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, Path, tuple[object, ...]]] = []
+
+            def extract(self, source: str, destination: Path, pieces) -> object:
+                pieces = tuple(pieces)
+                self.calls.append((source, Path(destination), pieces))
+                Path(destination).write_bytes(PMTILES_FIXTURE)
+                return SimpleNamespace(
+                    package_version="3.7.0",
+                    source_size=4096,
+                    etag='"private-validator"',
+                    last_modified="Fri, 10 Jul 2026 12:00:00 GMT",
+                    selected_tiles=7,
+                    written_tiles=6,
+                    downloaded_bytes=2048,
+                    request_count=3,
+                )
+
+            def validate(self, path: Path) -> bool:
+                return Path(path).read_bytes().startswith(b"PMTiles\x03")
+
+        extractor = FakePythonExtractor()
+
+        def fake_which(name: str) -> str:
+            which_calls.append(name)
+            if name == "pmtiles":
+                raise AssertionError("Python mode searched for the pmtiles CLI")
+            return f"/test-bin/{name}"
+
+        def fake_run(argv: list[str], **_kwargs: object) -> SimpleNamespace:
+            command = [str(item) for item in argv]
+            commands.append(command)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            session = ProtomapsSession(
+                bounds=((-1.0, -1.0, 1.0, 1.0), (170.0, -1.0, 180.0, 1.0)),
+                min_zoom=1,
+                global_zoom=1,
+                max_zoom=2,
+                style="osm",
+                cache_dir=Path(temporary),
+                build_url="https://build.protomaps.com/20260518.pmtiles",
+                python_extractor=extractor,
+                run=fake_run,
+                fetch=lambda *_args, **_kwargs: b"{}",
+                which=fake_which,
+                sleep=lambda _seconds: None,
+                monotonic=lambda: 0.0,
+            )
+
+            session.prepare()
+            self.assertEqual(len(extractor.calls), 1)
+            _source, _destination, pieces = extractor.calls[0]
+            self.assertEqual(len(pieces), 3)
+            self.assertEqual(which_calls, ["docker"])
+            self.assertFalse(any(command[0] == "pmtiles" for command in commands))
+            self.assertEqual(session.extractor_provenance["mode"], "python")
+            self.assertEqual(session.extractor_provenance["selected_tiles"], 7)
+            sidecars = list(Path(temporary).glob("*.cache.json"))
+            self.assertEqual(len(sidecars), 1)
+            sidecar_text = sidecars[0].read_text(encoding="utf-8")
+            self.assertNotIn("https://", sidecar_text)
+            self.assertNotIn("private-validator", sidecar_text)
+            self.assertIn("etag_sha256", sidecar_text)
+            archive_path = session.archive_path
+            session.close()
+
+            # Extractor implementation is provenance, not semantic identity:
+            # explicit CLI mode can reuse the validated Python-created entry.
+            cli_session = ProtomapsSession(
+                bounds=((-1.0, -1.0, 1.0, 1.0), (170.0, -1.0, 180.0, 1.0)),
+                min_zoom=1,
+                global_zoom=1,
+                max_zoom=2,
+                style="osm",
+                cache_dir=Path(temporary),
+                pmtiles_extractor="cli",
+                build_url="https://build.protomaps.com/20260518.pmtiles",
+                run=fake_run,
+                fetch=lambda *_args, **_kwargs: b"{}",
+                which=lambda name: f"/test-bin/{name}",
+                sleep=lambda _seconds: None,
+                monotonic=lambda: 0.0,
+            )
+            cli_session.prepare()
+            self.assertEqual(cli_session.archive_path, archive_path)
+            self.assertTrue(cli_session.extract_cache_hit)
+            self.assertFalse(
+                any(
+                    command[0] == "pmtiles"
+                    and command[1:2] in (["extract"], ["merge"])
+                    for command in commands
+                )
+            )
+            cli_session.close()
+
+    def test_python_extractor_interrupt_cleans_owned_partial(self) -> None:
+        class InterruptingExtractor:
+            def extract(self, _source: str, destination: Path, _pieces) -> object:
+                Path(destination).write_bytes(PMTILES_FIXTURE)
+                raise KeyboardInterrupt
+
+            def validate(self, _path: Path) -> bool:
+                return True
+
+        with tempfile.TemporaryDirectory() as temporary:
+            cache = Path(temporary)
+            session = ProtomapsSession(
+                bounds=(-1.0, -1.0, 1.0, 1.0),
+                min_zoom=1,
+                global_zoom=1,
+                max_zoom=1,
+                style="osm",
+                cache_dir=cache,
+                build_url="https://build.protomaps.com/20260518.pmtiles",
+                python_extractor=InterruptingExtractor(),
+                run=lambda *_args, **_kwargs: SimpleNamespace(
+                    returncode=0, stdout="", stderr=""
+                ),
+                fetch=lambda *_args, **_kwargs: b"{}",
+                which=lambda name: f"/test-bin/{name}",
+            )
+
+            with self.assertRaises(KeyboardInterrupt):
+                session.prepare()
+
+            self.assertEqual(list(cache.glob("*.part.pmtiles")), [])
+            self.assertEqual(list(cache.glob("*.pmtiles")), [])
+            self.assertEqual(list(cache.glob(".*.lock")), [])
 
     def test_custom_query_is_hashed_into_private_build_identity(self) -> None:
         common = {

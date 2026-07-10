@@ -115,6 +115,30 @@ class DownloadCliTests(unittest.TestCase):
 
             self.assertEqual(code, 0, text)
             self.assertIn("Dry run complete", text)
+            self.assertIn("PMTiles extractor: python", text)
+            self.assertFalse(output.exists())
+
+    def test_protomaps_cli_extractor_is_explicit_in_dry_run(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "dark"
+            code, text = self.run_cli(
+                [
+                    "--source",
+                    "protomaps",
+                    "--style",
+                    "dark",
+                    "--pmtiles-extractor",
+                    "cli",
+                    "--pmtiles-bin",
+                    "custom-pmtiles",
+                    "--dry-run",
+                    *self.plan_args(output),
+                ]
+            )
+
+            self.assertEqual(code, 0, text)
+            self.assertIn("PMTiles extractor: cli", text)
+            self.assertIn("custom-pmtiles", text)
             self.assertFalse(output.exists())
 
     def test_public_osm_endpoint_is_rejected_before_access(self) -> None:

@@ -1,2 +1,4 @@
 # Runtime dependency for validating, transforming, and writing firmware JPEG tiles.
 Pillow>=10.0
+# In-process PMTiles v3 extraction. The external CLI remains an explicit opt-in.
+pmtiles>=3.7,<4

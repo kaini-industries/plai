@@ -5,14 +5,15 @@ extracts the small subset needed by a Plai tile plan, then runs the full
 TileServer GL image on loopback so :mod:`tile_downloader` can consume an
 ordinary XYZ raster URL.
 
-No public raster tile server is contacted by this backend.  The only remote
-map request is made by the ``pmtiles extract`` CLI against a Protomaps archive
-whose terms permit extracts.
+No public raster tile server is contacted by this backend. The only remote map
+request is made by the selected Python or CLI extractor against a Protomaps
+archive whose terms permit extracts.
 """
 
 from __future__ import annotations
 
 import hashlib
+import importlib.metadata
 import json
 import math
 import os
@@ -224,6 +225,7 @@ class ProtomapsSession:
         max_zoom: int | None = None,
         style: str = "dark",
         cache_dir: str | os.PathLike[str] = ".cache/plai-protomaps",
+        pmtiles_extractor: str = "python",
         pmtiles_bin: str = "pmtiles",
         docker_bin: str = "docker",
         docker_image: str = DEFAULT_DOCKER_IMAGE,
@@ -237,6 +239,7 @@ class ProtomapsSession:
         monotonic: Callable[[], float] | None = None,
         ready_timeout: float = 60.0,
         ready_interval: float = 0.25,
+        python_extractor: object | None = None,
     ) -> None:
         if bounds is None:
             bounds = _value_from_plan(
@@ -270,8 +273,12 @@ class ProtomapsSession:
             raise ProtomapsError("TileServer GL port must be between 0 and 65535.")
         if not docker_image.strip():
             raise ProtomapsError("A TileServer GL Docker image is required.")
-        if not pmtiles_bin.strip() or not docker_bin.strip():
-            raise ProtomapsError("The pmtiles and docker executable names cannot be empty.")
+        if pmtiles_extractor not in {"python", "cli"}:
+            raise ProtomapsError("pmtiles_extractor must be either 'python' or 'cli'.")
+        if pmtiles_extractor == "cli" and not pmtiles_bin.strip():
+            raise ProtomapsError("The pmtiles executable name cannot be empty in CLI mode.")
+        if not docker_bin.strip():
+            raise ProtomapsError("The docker executable name cannot be empty.")
         if ready_timeout <= 0 or ready_interval <= 0:
             raise ProtomapsError("Renderer readiness timeout and interval must be positive.")
         if build_url is not None and not build_url.strip():
@@ -281,6 +288,7 @@ class ProtomapsSession:
 
         self.style = style
         self.cache_dir = Path(cache_dir).expanduser().resolve()
+        self.pmtiles_extractor = pmtiles_extractor
         self.pmtiles_bin = pmtiles_bin
         self.docker_bin = docker_bin
         self.docker_image = docker_image
@@ -296,6 +304,7 @@ class ProtomapsSession:
         self._which = which or shutil.which
         self._sleep = sleep or time.sleep
         self._monotonic = monotonic or time.monotonic
+        self._python_extractor = python_extractor
 
         self.build_key: str | None = None
         self.build_version: str | None = None
@@ -303,6 +312,8 @@ class ProtomapsSession:
         self.build_identity_sha256: str | None = None
         self.style_sha256: str | None = None
         self.archive_path: Path | None = None
+        self.extraction_result: object | None = None
+        self.extract_cache_hit = False
         self.config_path: Path | None = None
         self.container_name: str | None = None
         self._url_template: str | None = None
@@ -338,6 +349,40 @@ class ProtomapsSession:
         )
 
     @property
+    def extractor_provenance(self) -> Mapping[str, object]:
+        """Non-semantic extraction details recorded in the output manifest."""
+
+        if self.pmtiles_extractor == "cli":
+            return {
+                "mode": "cli",
+                "executable": self.pmtiles_bin,
+                "cache_hit": self.extract_cache_hit,
+            }
+        try:
+            version = importlib.metadata.version("pmtiles")
+        except importlib.metadata.PackageNotFoundError:
+            version = None
+        provenance: dict[str, object] = {
+            "mode": "python",
+            "package": "pmtiles",
+            "package_version": version,
+            "cache_hit": self.extract_cache_hit,
+        }
+        if self.extraction_result is not None:
+            for name in (
+                "package_version",
+                "source_size",
+                "selected_tiles",
+                "written_tiles",
+                "downloaded_bytes",
+                "request_count",
+            ):
+                value = getattr(self.extraction_result, name, None)
+                if isinstance(value, (str, int)) and not isinstance(value, bool):
+                    provenance[name] = value
+        return provenance
+
+    @property
     def url_template(self) -> str:
         if self._url_template is None:
             raise ProtomapsError(
@@ -370,7 +415,10 @@ class ProtomapsSession:
             return self
 
         self._verify_style_asset()
-        self._verify_binary(self.pmtiles_bin, "pmtiles CLI")
+        if self.pmtiles_extractor == "cli":
+            self._verify_binary(self.pmtiles_bin, "pmtiles CLI")
+        else:
+            self._ensure_python_extractor()
         self._verify_binary(self.docker_bin, "Docker CLI")
         self._resolve_build()
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -413,6 +461,27 @@ class ProtomapsSession:
             raise ProtomapsError(
                 f"{description} executable '{executable}' was not found or is not executable."
             )
+
+    def _ensure_python_extractor(self) -> object:
+        if self._python_extractor is not None:
+            return self._python_extractor
+        try:
+            try:
+                from python_pmtiles import PythonPmtilesExtractor
+            except ImportError:
+                from .python_pmtiles import PythonPmtilesExtractor
+            self._python_extractor = PythonPmtilesExtractor()
+        except ImportError as error:
+            raise ProtomapsError(
+                "Python PMTiles extraction requires pmtiles>=3.7,<4; install "
+                "the dependencies in map/requirements.txt, or explicitly use "
+                "--pmtiles-extractor cli with the pmtiles executable installed."
+            ) from error
+        except Exception as error:
+            raise ProtomapsError(
+                f"Could not initialize the Python PMTiles extractor: {error}"
+            ) from error
+        return self._python_extractor
 
     def _selected_style_path(self) -> Path:
         filename = "light.json" if self.style == "osm" else "dark.json"
@@ -633,13 +702,22 @@ class ProtomapsSession:
         self, pieces: Sequence[_ExtractPiece], stem: str, final_path: Path
     ) -> Path:
 
-        if self._verified_pmtiles(final_path):
+        if self._verified_cache_entry(final_path, pieces):
+            self.extract_cache_hit = True
             return final_path
-        if final_path.exists():
-            final_path.unlink()
+        self.extract_cache_hit = False
+        # Keep any previous final archive and sidecar in place until a new,
+        # validated archive is ready for atomic promotion. A failed or
+        # interrupted refresh must not destroy the last cache artifact.
+
+        if self.pmtiles_extractor == "python":
+            result = self._prepare_extract_python(pieces, final_path)
+            self._write_cache_sidecar(result, pieces)
+            return result
 
         if len(pieces) == 1:
-            self._extract_piece(pieces[0], final_path)
+            self._extract_piece(pieces[0], final_path, reuse_existing=False)
+            self._write_cache_sidecar(final_path, pieces)
             return final_path
 
         piece_paths: list[Path] = []
@@ -657,15 +735,82 @@ class ProtomapsSession:
             *(str(path) for path in piece_paths),
             str(temporary),
         ]
-        self._run_command(command, action="merge Protomaps extracts")
-        self._promote_pmtiles(temporary, final_path, "merged Protomaps extract")
+        try:
+            self._run_command(command, action="merge Protomaps extracts")
+            self._promote_pmtiles(temporary, final_path, "merged Protomaps extract")
+        finally:
+            try:
+                temporary.unlink()
+            except FileNotFoundError:
+                pass
+        self._write_cache_sidecar(final_path, pieces)
         return final_path
 
-    def _extract_piece(self, piece: _ExtractPiece, destination: Path) -> None:
-        if self._verified_pmtiles(destination):
+    def _prepare_extract_python(
+        self, pieces: Sequence[_ExtractPiece], final_path: Path
+    ) -> Path:
+        """Extract all coverage pieces into one archive without the Go CLI."""
+
+        if self._raw_build_url is None:
+            raise ProtomapsError("A Protomaps build must be resolved before extraction.")
+        temporary = final_path.with_name(f"{final_path.stem}.part.pmtiles")
+        if temporary.exists():
+            temporary.unlink()
+        extractor = self._ensure_python_extractor()
+        try:
+            try:
+                from python_pmtiles import ExtractionPiece
+            except ImportError:
+                from .python_pmtiles import ExtractionPiece
+            extraction_pieces = tuple(
+                ExtractionPiece(
+                    min_zoom=piece.min_zoom,
+                    max_zoom=piece.max_zoom,
+                    bounds=piece.bounds,
+                )
+                for piece in pieces
+            )
+            self.extraction_result = extractor.extract(
+                self._raw_build_url, temporary, extraction_pieces
+            )
+        except ImportError as error:
+            try:
+                temporary.unlink()
+            except FileNotFoundError:
+                pass
+            raise ProtomapsError(
+                "Python PMTiles extraction requires pmtiles>=3.7,<4; install "
+                "map/requirements.txt."
+            ) from error
+        except BaseException as error:
+            try:
+                temporary.unlink()
+            except FileNotFoundError:
+                pass
+            if not isinstance(error, Exception):
+                raise
+            raise ProtomapsError(
+                "Could not extract Protomaps coverage with the Python PMTiles "
+                f"extractor: {self._redact_text(str(error))}"
+            ) from error
+        try:
+            self._promote_pmtiles(temporary, final_path, "Python Protomaps extract")
+        finally:
+            try:
+                temporary.unlink()
+            except FileNotFoundError:
+                pass
+        return final_path
+
+    def _extract_piece(
+        self,
+        piece: _ExtractPiece,
+        destination: Path,
+        *,
+        reuse_existing: bool = True,
+    ) -> None:
+        if reuse_existing and self._verified_pmtiles(destination):
             return
-        if destination.exists():
-            destination.unlink()
         temporary = destination.with_name(f"{destination.stem}.part.pmtiles")
         if temporary.exists():
             temporary.unlink()
@@ -680,11 +825,17 @@ class ProtomapsSession:
         ]
         if piece.bounds is not None:
             command.append(f"--bbox={self._format_bbox(piece.bounds)}")
-        self._run_command(
-            command,
-            action=f"extract Protomaps {piece.label} zooms {piece.min_zoom}-{piece.max_zoom}",
-        )
-        self._promote_pmtiles(temporary, destination, f"Protomaps {piece.label} extract")
+        try:
+            self._run_command(
+                command,
+                action=f"extract Protomaps {piece.label} zooms {piece.min_zoom}-{piece.max_zoom}",
+            )
+            self._promote_pmtiles(temporary, destination, f"Protomaps {piece.label} extract")
+        finally:
+            try:
+                temporary.unlink()
+            except FileNotFoundError:
+                pass
 
     @staticmethod
     def _format_bbox(bounds: tuple[float, float, float, float]) -> str:
@@ -705,6 +856,12 @@ class ProtomapsSession:
         """Check the header and PMTiles directory/header integrity."""
         if not self._valid_pmtiles(path):
             return False
+        if self.pmtiles_extractor == "python":
+            extractor = self._ensure_python_extractor()
+            try:
+                return bool(extractor.validate(path))
+            except Exception:
+                return False
         result = self._run_command(
             [self.pmtiles_bin, "verify", str(path)],
             action=f"verify PMTiles archive {path.name}",
@@ -721,6 +878,105 @@ class ProtomapsSession:
                 "verified PMTiles v3 archive."
             )
         os.replace(temporary, destination)
+
+    @staticmethod
+    def _cache_sidecar_path(archive: Path) -> Path:
+        return archive.with_suffix(".cache.json")
+
+    @staticmethod
+    def _sha256_file(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    def _cache_identity(
+        self, pieces: Sequence[_ExtractPiece]
+    ) -> Mapping[str, object]:
+        if self._raw_build_url is None or self.build_key is None:
+            raise ProtomapsError("A Protomaps build must be resolved before cache use.")
+        return {
+            "source_url_sha256": hashlib.sha256(
+                self._raw_build_url.encode("utf-8")
+            ).hexdigest(),
+            "build_key": self.build_key,
+            "pieces": [
+                {
+                    "label": piece.label,
+                    "min_zoom": piece.min_zoom,
+                    "max_zoom": piece.max_zoom,
+                    "bounds": list(piece.bounds) if piece.bounds else None,
+                }
+                for piece in pieces
+            ],
+        }
+
+    def _verified_cache_entry(
+        self, archive: Path, pieces: Sequence[_ExtractPiece]
+    ) -> bool:
+        if not self._verified_pmtiles(archive):
+            return False
+        sidecar = self._cache_sidecar_path(archive)
+        try:
+            payload = json.loads(sidecar.read_text(encoding="utf-8"))
+            stat = archive.stat()
+            return bool(
+                isinstance(payload, Mapping)
+                and payload.get("schema_version") == 1
+                and payload.get("source") == self._cache_identity(pieces)
+                and payload.get("archive")
+                == {
+                    "size": stat.st_size,
+                    "sha256": self._sha256_file(archive),
+                }
+            )
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ProtomapsError):
+            return False
+
+    def _write_cache_sidecar(
+        self, archive: Path, pieces: Sequence[_ExtractPiece]
+    ) -> None:
+        stat = archive.stat()
+        payload = {
+            "schema_version": 1,
+            "source": self._cache_identity(pieces),
+            "archive": {
+                "size": stat.st_size,
+                "sha256": self._sha256_file(archive),
+            },
+            "extractor": dict(self.extractor_provenance),
+        }
+        if self.pmtiles_extractor == "python" and self.extraction_result is not None:
+            source_size = getattr(self.extraction_result, "source_size", None)
+            snapshot: dict[str, object] = {}
+            if isinstance(source_size, int) and not isinstance(source_size, bool):
+                snapshot["source_size"] = source_size
+            for name in ("etag", "last_modified"):
+                value = getattr(self.extraction_result, name, None)
+                if isinstance(value, str) and value:
+                    snapshot[f"{name}_sha256"] = hashlib.sha256(
+                        value.encode("utf-8")
+                    ).hexdigest()
+            if snapshot:
+                # Validators are audit metadata only. Cache reuse stays
+                # network-free, and raw provider values are never persisted.
+                payload["source_snapshot"] = snapshot
+        destination = self._cache_sidecar_path(archive)
+        temporary = destination.with_name(
+            f".{destination.name}.{uuid.uuid4().hex}.part"
+        )
+        try:
+            temporary.write_text(
+                json.dumps(payload, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            os.replace(temporary, destination)
+        finally:
+            try:
+                temporary.unlink()
+            except FileNotFoundError:
+                pass
 
     def _write_tileserver_config(self) -> Path:
         if self.archive_path is None:

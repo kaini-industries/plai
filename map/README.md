@@ -6,7 +6,7 @@ scrape public community tile servers.
 
 ## Install
 
-Use Python 3 and install the image dependency:
+Use Python 3 and install the image and PMTiles dependencies:
 
 ```bash
 python3 -m venv .venv
@@ -46,11 +46,12 @@ The built-in sources are:
 
 ### Protomaps
 
-Install the dependency-free [`pmtiles` CLI][pmtiles-cli] and make sure it is on
-`PATH`. Install Docker as well. The packager extracts only the requested bounds
-and zooms from a [Protomaps daily basemap build][protomaps-builds], caches the
-extract, and starts a pinned **full** TileServer GL container on loopback to
-render JPEG/PNG tiles:
+The default extractor uses the Python `pmtiles` package installed by
+`map/requirements.txt`; no separate `pmtiles` executable is needed. Install
+Docker as well. The packager extracts only the requested bounds and zooms from
+a [Protomaps daily basemap build][protomaps-builds], caches the extract, and
+starts a pinned **full** TileServer GL container on loopback to render JPEG/PNG
+tiles:
 
 ```bash
 python3 map/download_osm_tiles.py \
@@ -66,8 +67,23 @@ raster rendering. Full TileServer GL exposes rendered tiles at
 the vendored Protomaps styles. Those styles reference the official hosted
 Protomaps glyph and sprite assets, so the renderer needs internet access for
 those assets on a cache miss. The extracted vector archive itself is cached.
-Cached and newly created PMTiles extracts are checked with `pmtiles verify`
-before they are rendered or promoted into the cache.
+Cached and newly created PMTiles extracts are structurally validated before
+they are rendered or atomically promoted into the cache.
+
+To use an installed [`pmtiles` CLI][pmtiles-cli] instead, opt in explicitly:
+
+```bash
+python3 map/download_osm_tiles.py \
+  --source protomaps --pmtiles-extractor cli --pmtiles-bin pmtiles \
+  --lat 40.7128 --lon -74.0060 --radius 50 --style dark
+```
+
+Python mode never searches for or invokes the CLI, and CLI mode never falls
+back to Python. A missing Python package produces an installation hint for
+`map/requirements.txt`; a missing CLI produces an executable-specific error.
+`--dry-run` performs no imports that initialize an extractor, network access,
+process launches, or filesystem writes; its plan identifies which extractor
+would be used during the real run.
 
 Daily build URLs are date-specific. For a reproducible pack, select a specific
 compatible build instead of relying on the moving latest build, and keep the
@@ -75,11 +91,25 @@ generated `tileset.json` with the tiles. Use `--protomaps-build-url` for a
 specific URL; `--protomaps-key` fills a `{key}` placeholder in that URL.
 Extracted archives are cached under `~/.cache/plai-map` by default and can be
 moved with `--cache-dir`. Local installations can also override
-`--pmtiles-bin`, `--docker-bin`, `--tileserver-image`, and the loopback
-`--tileserver-port`. Per-extract lock files prevent concurrent processes from
-sharing a PMTiles temporary file; if a process is killed without cleanup, the
-error message identifies the stale lock that can be removed after confirming
-no extraction is active.
+`--docker-bin`, `--tileserver-image`, and the loopback `--tileserver-port`.
+`--pmtiles-bin` applies only to explicit CLI mode. Per-extract lock files
+prevent concurrent processes from sharing a PMTiles temporary file; if a
+process is killed without cleanup, the error message identifies the stale lock
+that can be removed after confirming no extraction is active.
+
+The selected extractor and its package/executable details are recorded as
+provenance in `tileset.json`. Extractor choice is deliberately not part of the
+semantic source fingerprint: Python and CLI extraction of the same build and
+coverage safely share the same validated cache entry.
+
+Every cached extract has an adjacent `.cache.json` sidecar. It records a schema
+version, a SHA-256 identity for the (possibly credential-bearing) source URL,
+the exact zoom/bounds pieces, archive byte size, and archive SHA-256. A missing
+or mismatched sidecar makes the cache entry untrusted and triggers a fresh
+atomic extraction; raw source credentials are never written to the sidecar.
+Python extraction also records source size and SHA-256 hashes of any ETag or
+Last-Modified validator as audit metadata, never their raw values. Cache reuse
+remains network-free and does not treat those snapshots as a freshness check.
 
 ### Authorized local XYZ endpoint
 
