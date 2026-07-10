@@ -196,7 +196,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--protomaps-key",
         help="build key substituted into {key} in --protomaps-build-url",
     )
-    protomaps.add_argument("--pmtiles-bin", default="pmtiles")
+    protomaps.add_argument(
+        "--pmtiles-extractor",
+        choices=("python", "cli"),
+        default="python",
+        help="PMTiles extraction implementation; cli requires the external binary",
+    )
+    protomaps.add_argument(
+        "--pmtiles-bin",
+        default="pmtiles",
+        help="pmtiles executable used only with --pmtiles-extractor cli",
+    )
     protomaps.add_argument("--docker-bin", default="docker")
     protomaps.add_argument("--tileserver-image", default=DEFAULT_DOCKER_IMAGE)
     protomaps.add_argument(
@@ -277,6 +287,13 @@ def _print_job(args: argparse.Namespace, plan: TilePlan, output: Path) -> None:
         f"{plan.radius_km:g} km"
     )
     print(f"  output: {output}")
+    if args.source == "protomaps":
+        detail = (
+            "in-process pmtiles library"
+            if args.pmtiles_extractor == "python"
+            else f"external {args.pmtiles_bin!r} executable"
+        )
+        print(f"  PMTiles extractor: {args.pmtiles_extractor} ({detail})")
     print_plan(plan)
     if args.allow_large_download and plan.total_tiles > args.max_tiles:
         print(
@@ -296,6 +313,7 @@ def _protomaps_source(
         max_zoom=plan.max_zoom,
         style=args.style,
         cache_dir=args.cache_dir,
+        pmtiles_extractor=args.pmtiles_extractor,
         pmtiles_bin=args.pmtiles_bin,
         docker_bin=args.docker_bin,
         docker_image=args.tileserver_image,
@@ -311,6 +329,7 @@ def _protomaps_source(
         "build_version": session.build_version,
         "build_url": session.build_url,
         "archive": session.archive_path.name if session.archive_path else None,
+        "extractor": session.extractor_provenance,
         "renderer_image": args.tileserver_image,
     }
     source = HttpTileSource(
@@ -405,6 +424,16 @@ def run(argv: Sequence[str] | None = None) -> int:
         output = _output_path(args)
         _print_job(args, plan, output)
         if args.dry_run:
+            if args.source == "protomaps":
+                print(
+                    "  Prerequisites were not checked during dry-run; the real "
+                    "run requires Docker and "
+                    + (
+                        "pmtiles>=3.7,<4 from map/requirements.txt."
+                        if args.pmtiles_extractor == "python"
+                        else f"the {args.pmtiles_bin!r} pmtiles executable."
+                    )
+                )
             print(
                 "Dry run complete; no network, process, or filesystem writes "
                 "performed."

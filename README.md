@@ -236,13 +236,17 @@ Use `map/download_osm_tiles.py` to package tiles from a source that permits offl
 
 The firmware recognizes `osm`, `dark`, `voyager`, and `topo` style directories. Protomaps supplies the `osm` light theme and `dark`; use an appropriately licensed local or MBTiles source for `voyager` or `topo`.
 
-Install the Python dependency first:
+Install the Python dependencies first:
 
 ```bash
 python3 -m pip install -r map/requirements.txt
 ```
 
-For the default Protomaps workflow, also install the [`pmtiles` CLI](https://docs.protomaps.com/pmtiles/cli) and Docker. Use full TileServer GL, not TileServer GL Light, because server-side raster rendering is required.
+The default Protomaps workflow extracts PMTiles in-process and does not need the
+`pmtiles` command-line program. Docker is still required for full TileServer GL
+server-side raster rendering. An existing CLI installation can be selected
+explicitly with `--pmtiles-extractor cli --pmtiles-bin pmtiles`; the packager
+never silently falls back between implementations.
 
 Always inspect the plan before a large build:
 
